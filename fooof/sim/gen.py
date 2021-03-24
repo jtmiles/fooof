@@ -2,11 +2,11 @@
 
 import numpy as np
 
-from fooof.core.utils import check_iter, check_flat
-from fooof.core.funcs import get_ap_func, get_pe_func, infer_ap_func
+from fooof_pls.core.utils import check_iter, check_flat
+from fooof_pls.core.funcs import *
 
-from fooof.sim.params import collect_sim_params
-from fooof.sim.transform import rotate_spectrum, compute_rotation_offset
+from fooof_pls.sim.params import collect_sim_params
+from fooof_pls.sim.transform import rotate_spectrum, compute_rotation_offset
 
 ###################################################################################################
 ###################################################################################################
@@ -290,7 +290,7 @@ def gen_group_power_spectra(n_spectra, freq_range, aperiodic_params, periodic_pa
         return freqs, powers
 
 
-def gen_aperiodic(freqs, aperiodic_params, aperiodic_mode=None):
+def gen_aperiodic(freqs, aperiodic_params, mod = False, aperiodic_mode=None):
     """Generate aperiodic values.
 
     Parameters
@@ -312,7 +312,10 @@ def gen_aperiodic(freqs, aperiodic_params, aperiodic_mode=None):
     if not aperiodic_mode:
         aperiodic_mode = infer_ap_func(aperiodic_params)
 
-    ap_func = get_ap_func(aperiodic_mode)
+    if not mod:
+        ap_func = get_ap_func(aperiodic_mode)
+    else:
+        ap_func = get_mod_ap_func(aperiodic_mode)
 
     ap_vals = ap_func(freqs, *aperiodic_params)
 

@@ -1,4 +1,4 @@
-"""A data object for managing band definitions."""
+"""A data oject for managing band definitions."""
 
 from collections import OrderedDict
 
@@ -60,7 +60,7 @@ class Bands():
         return self.n_bands
 
     def __iter__(self):
-        """Define iteration as stepping across each band."""
+        """Define iteratation as stepping across each band."""
 
         for label, band_definition in self.bands.items():
             yield (label, band_definition)

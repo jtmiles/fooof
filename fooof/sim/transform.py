@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from fooof.sim.params import update_sim_ap_params
+from fooof_pls.sim.params import update_sim_ap_params
 
 ###################################################################################################
 ###################################################################################################

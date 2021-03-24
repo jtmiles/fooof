@@ -2,11 +2,11 @@
 
 import numpy as np
 
-from fooof.sim import gen_freqs
-from fooof.data import FOOOFResults
-from fooof.objs import FOOOF, FOOOFGroup
-from fooof.analysis.periodic import get_band_peak_fg
-from fooof.core.errors import NoModelError, IncompatibleSettingsError
+from fooof_pls.sim import gen_freqs
+from fooof_pls.data import FOOOFResults
+from fooof_pls.objs import FOOOF, FOOOFGroup
+from fooof_pls.analysis.periodic import get_band_peak_fg
+from fooof_pls.core.errors import NoModelError, IncompatibleSettingsError
 
 ###################################################################################################
 ###################################################################################################
@@ -138,7 +138,7 @@ def combine_fooofs(fooofs):
     --------
     Combine FOOOF objects together (where `fm1`, `fm2` & `fm3` are assumed to be defined and fit):
 
-    >>> fg = combine_fooofs([fm1, fm2, fm3])  # doctest:+SKIP
+    >>> fg = combine_fooofs([fm1, fm2, f3])  # doctest:+SKIP
 
     Combine FOOOFGroup objects together (where `fg1` & `fg2` are assumed to be defined and fit):
 
@@ -177,9 +177,6 @@ def combine_fooofs(fooofs):
     # If the number of collected power spectra is consistent, then add them to object
     if len(fg) == temp_power_spectra.shape[0]:
         fg.power_spectra = temp_power_spectra
-
-    # Set the check data mode, as True if any of the inputs have it on, False otherwise
-    fg.set_check_data_mode(any([getattr(f_obj, '_check_data') for f_obj in fooofs]))
 
     # Add data information information
     fg.add_meta_data(fooofs[0].get_meta_data())

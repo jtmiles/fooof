@@ -12,7 +12,7 @@ from py.test import raises
 from fooof.core.items import OBJ_DESC
 from fooof.core.errors import FitError
 from fooof.core.utils import group_three
-from fooof.sim import gen_freqs, gen_power_spectrum
+from fooof.sim import gen_power_spectrum
 from fooof.data import FOOOFSettings, FOOOFMetaData, FOOOFResults
 from fooof.core.errors import DataError, NoDataError, InconsistentDataError
 
@@ -55,28 +55,26 @@ def test_fooof_fit_nk():
 
     ap_params = [50, 2]
     gauss_params = [10, 0.5, 2, 20, 0.3, 4]
-    nlv = 0.0025
 
-    xs, ys = gen_power_spectrum([3, 50], ap_params, gauss_params, nlv)
+    xs, ys = gen_power_spectrum([3, 50], ap_params, gauss_params)
 
     tfm = FOOOF(verbose=False)
     tfm.fit(xs, ys)
 
     # Check model results - aperiodic parameters
-    assert np.allclose(ap_params, tfm.aperiodic_params_, [0.5, 0.1])
+    assert np.all(np.isclose(ap_params, tfm.aperiodic_params_, [0.5, 0.1]))
 
     # Check model results - gaussian parameters
     for ii, gauss in enumerate(group_three(gauss_params)):
-        assert np.allclose(gauss, tfm.gaussian_params_[ii], [2.0, 0.5, 1.0])
+        assert np.all(np.isclose(gauss, tfm.gaussian_params_[ii], [2.0, 0.5, 1.0]))
 
 def test_fooof_fit_nk_noise():
     """Test FOOOF fit on noisy data, to make sure nothing breaks."""
 
     ap_params = [50, 2]
     gauss_params = [10, 0.5, 2, 20, 0.3, 4]
-    nlv = 1.0
 
-    xs, ys = gen_power_spectrum([3, 50], ap_params, gauss_params, nlv)
+    xs, ys = gen_power_spectrum([3, 50], ap_params, gauss_params, nlv=1.0)
 
     tfm = FOOOF(max_n_peaks=8, verbose=False)
     tfm.fit(xs, ys)
@@ -89,19 +87,18 @@ def test_fooof_fit_knee():
 
     ap_params = [50, 10, 1]
     gauss_params = [10, 0.3, 2, 20, 0.1, 4, 60, 0.3, 1]
-    nlv = 0.0025
 
-    xs, ys = gen_power_spectrum([1, 150], ap_params, gauss_params, nlv)
+    xs, ys = gen_power_spectrum([1, 150], ap_params, gauss_params, nlv=0)
 
     tfm = FOOOF(aperiodic_mode='knee', verbose=False)
     tfm.fit(xs, ys)
 
     # Check model results - aperiodic parameters
-    assert np.allclose(ap_params, tfm.aperiodic_params_, [1, 2, 0.2])
+    assert np.all(np.isclose(ap_params, tfm.aperiodic_params_, [1, 2, 0.2]))
 
     # Check model results - gaussian parameters
     for ii, gauss in enumerate(group_three(gauss_params)):
-        assert np.allclose(gauss, tfm.gaussian_params_[ii], [2.0, 0.5, 1.0])
+        assert np.all(np.isclose(gauss, tfm.gaussian_params_[ii], [2.0, 0.5, 1.0]))
 
 def test_fooof_fit_measures():
     """Test goodness of fit & error metrics, post model fitting."""
@@ -226,39 +223,20 @@ def test_fooof_load():
     for meta_dat in OBJ_DESC['meta_data']:
         assert getattr(tfm, meta_dat) is not None
 
-def test_add_data():
-    """Tests method to add data to FOOOF objects."""
+def test_adds():
+    """Tests methods that add data to FOOOF objects.
 
-    # This test uses it's own FOOOF object, to not add stuff to the global one
+    Checks: add_data, add_settings, add_results.
+    """
+
+    # Note: uses it's own tfm, to not add stuff to the global one
     tfm = get_tfm()
-
-    # Test data for adding
-    freqs, pows = np.array([1, 2, 3]), np.array([10, 10, 10])
 
     # Test adding data
+    freqs, pows = np.array([1, 2, 3]), np.array([10, 10, 10])
     tfm.add_data(freqs, pows)
-    assert tfm.has_data
     assert np.all(tfm.freqs == freqs)
     assert np.all(tfm.power_spectrum == np.log10(pows))
-
-    # Test that prior data does not get cleared, when requesting not to clear
-    tfm._reset_data_results(True, True, True)
-    tfm.add_results(FOOOFResults([1, 1], [10, 0.5, 0.5], 0.95, 0.02, [10, 0.5, 0.25]))
-    tfm.add_data(freqs, pows, clear_results=False)
-    assert tfm.has_data
-    assert tfm.has_model
-
-    # Test that prior data does get cleared, when requesting not to clear
-    tfm._reset_data_results(True, True, True)
-    tfm.add_data(freqs, pows, clear_results=True)
-    assert tfm.has_data
-    assert not tfm.has_model
-
-def test_add_settings():
-    """Tests method to add settings to FOOOF objects."""
-
-    # This test uses it's own FOOOF object, to not add stuff to the global one
-    tfm = get_tfm()
 
     # Test adding settings
     fooof_settings = FOOOFSettings([1, 4], 6, 0, 2, 'fixed')
@@ -266,28 +244,15 @@ def test_add_settings():
     for setting in OBJ_DESC['settings']:
         assert getattr(tfm, setting) == getattr(fooof_settings, setting)
 
-def test_add_meta_data():
-    """Tests method to add meta data to FOOOF objects."""
-
-    # This test uses it's own FOOOF object, to not add stuff to the global one
-    tfm = get_tfm()
-
     # Test adding meta data
     fooof_meta_data = FOOOFMetaData([3, 40], 0.5)
     tfm.add_meta_data(fooof_meta_data)
     for meta_dat in OBJ_DESC['meta_data']:
         assert getattr(tfm, meta_dat) == getattr(fooof_meta_data, meta_dat)
 
-def test_add_results():
-    """Tests method to add results to FOOOF objects."""
-
-    # This test uses it's own FOOOF object, to not add stuff to the global one
-    tfm = get_tfm()
-
     # Test adding results
     fooof_results = FOOOFResults([1, 1], [10, 0.5, 0.5], 0.95, 0.02, [10, 0.5, 0.25])
     tfm.add_results(fooof_results)
-    assert tfm.has_model
     for setting in OBJ_DESC['results']:
         assert getattr(tfm, setting) == getattr(fooof_results, setting.strip('_'))
 
@@ -396,7 +361,7 @@ def test_fooof_fit_failure():
         assert np.all(np.isnan(getattr(tfm, result)))
 
 def test_fooof_debug():
-    """Test FOOOF in debug mode, including with fit failures."""
+    """Test FOOOF fit failure in debug mode."""
 
     tfm = FOOOF(verbose=False)
     tfm._maxfev = 5
@@ -406,22 +371,3 @@ def test_fooof_debug():
 
     with raises(FitError):
         tfm.fit(*gen_power_spectrum([3, 50], [50, 2], [10, 0.5, 2, 20, 0.3, 4]))
-
-def test_fooof_check_data():
-    """Test FOOOF in with check data mode turned off, including with NaN data."""
-
-    tfm = FOOOF(verbose=False)
-
-    tfm.set_check_data_mode(False)
-    assert tfm._check_data is False
-
-    # Add data, with check data turned off
-    #   In check data mode, adding data with NaN should run
-    freqs = gen_freqs([3, 50], 0.5)
-    powers = np.ones_like(freqs) * np.nan
-    tfm.add_data(freqs, powers)
-    assert tfm.has_data
-
-    # Model fitting should execute, but return a null model fit, given the NaNs, without failing
-    tfm.fit()
-    assert not tfm.has_model

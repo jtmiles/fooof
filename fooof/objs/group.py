@@ -11,16 +11,16 @@ from multiprocessing import Pool, cpu_count
 
 import numpy as np
 
-from fooof.objs import FOOOF
-from fooof.plts.fg import plot_fg
-from fooof.core.items import OBJ_DESC
-from fooof.core.info import get_indices
-from fooof.core.utils import check_inds
-from fooof.core.errors import NoModelError
-from fooof.core.reports import save_report_fg
-from fooof.core.strings import gen_results_fg_str
-from fooof.core.io import save_fg, load_jsonlines
-from fooof.core.modutils import copy_doc_func_to_method, safe_import
+from fooof_pls.objs import FOOOF
+from fooof_pls.plts.fg import plot_fg
+from fooof_pls.core.items import OBJ_DESC
+from fooof_pls.core.info import get_indices
+from fooof_pls.core.utils import check_inds
+from fooof_pls.core.errors import NoModelError
+from fooof_pls.core.reports import save_report_fg
+from fooof_pls.core.strings import gen_results_fg_str
+from fooof_pls.core.io import save_fg, load_jsonlines
+from fooof_pls.core.modutils import copy_doc_func_to_method, safe_import
 
 ###################################################################################################
 ###################################################################################################
@@ -222,7 +222,7 @@ class FOOOFGroup(FOOOF):
             self._reset_group_results()
 
         self.freqs, self.power_spectra, self.freq_range, self.freq_res = \
-            self._prepare_data(freqs, power_spectra, freq_range, 2)
+            self._prepare_data(freqs, power_spectra, freq_range, 2, self.verbose)
 
 
     def report(self, freqs=None, power_spectra=None, freq_range=None, n_jobs=1, progress=None):
@@ -476,9 +476,8 @@ class FOOOFGroup(FOOOF):
             The FOOOFResults data loaded into a FOOOF object.
         """
 
-        # Initialize a FOOOF object, with same settings & check data mode as current FOOOFGroup
+        # Initialize a FOOOF object, with same settings as current FOOOFGroup
         fm = FOOOF(*self.get_settings(), verbose=self.verbose)
-        fm.set_check_data_mode(self._check_data)
 
         # Add data for specified single power spectrum, if available
         #   The power spectrum is inverted back to linear, as it is re-logged when added to FOOOF
@@ -558,7 +557,7 @@ class FOOOFGroup(FOOOF):
         """Check and warn about bandwidth limits / frequency resolution interaction."""
 
         # Only check & warn on first power spectrum
-        #   This is to avoid spamming standard output for every spectrum in the group
+        #   This is to avoid spamming stdout for every spectrum in the group
         if self.power_spectra[0, 0] == self.power_spectrum[0]:
             super()._check_width_limits()
 

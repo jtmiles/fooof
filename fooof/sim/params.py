@@ -2,12 +2,12 @@
 
 import numpy as np
 
-from fooof.core.utils import group_three, check_flat
-from fooof.core.info import get_indices
-from fooof.core.funcs import infer_ap_func
-from fooof.core.errors import InconsistentDataError
+from fooof_pls.core.utils import group_three, check_flat
+from fooof_pls.core.info import get_indices
+from fooof_pls.core.funcs import infer_ap_func
+from fooof_pls.core.errors import InconsistentDataError
 
-from fooof.data import SimParams
+from fooof_pls.data import SimParams
 
 ###################################################################################################
 ###################################################################################################

@@ -10,7 +10,6 @@ NOTES
 import numpy as np
 
 from fooof.core.errors import InconsistentDataError
-
 ###################################################################################################
 ###################################################################################################
 
@@ -59,7 +58,6 @@ def expo_function(xs, *params):
     ys : 1d array
         Output values for exponential function.
     """
-
     ys = np.zeros_like(xs)
 
     offset, knee, exp = params
@@ -67,6 +65,158 @@ def expo_function(xs, *params):
     ys = ys + offset - np.log10(knee + xs**exp)
 
     return ys
+
+def old_mod_expo_function(xs, *params):
+    ys = np.zeros_like(xs)
+
+    offset, knee, exp = params
+
+    ys = ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+
+    return ys
+
+def mod_expo_function(xs, *params):
+    ys = np.zeros_like(xs)
+
+    offset, log_knee, exp = params
+
+    ys = ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+
+    return ys
+
+def get_fixed_expo_func(offset = False, knee = False, exp = False):
+    try:
+        if offset and not (knee or exp): # only fixed offset
+            def fixed_function(xs, knee, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        elif knee and not (offset or exp): # only fixed knee
+            def fixed_function(xs, offset, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        elif exp and not (offset or knee): # only fixed exponent
+            def fixed_function(xs, offset, knee):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        elif offset and knee and not exp: # only optimize exponent
+            def fixed_function(xs, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        elif offset and exp and not knee: # only optimize knee
+            def fixed_function(xs, knee):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        elif knee and exp and not offset: # only optimize offset
+            def fixed_function(xs, offset):
+                ys = np.zeros_like(xs)
+                return ys + offset - np.log10(knee + xs**exp)
+        return fixed_function
+    except:
+        if not (offset or knee or exp):
+            print('no parameters are fixed')
+        elif offset and knee and exp:
+            print('all parameters are fixed')
+
+def get_fixed_old_mod_func(offset = False, knee = False, exp = False):
+    try:
+        if offset and not (knee or exp): # only fixed offset
+            def fixed_function(xs, knee, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        elif knee and not (offset or exp): # only fixed knee
+            def fixed_function(xs, offset, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        elif exp and not (offset or knee): # only fixed exponent
+            def fixed_function(xs, offset, knee):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        elif offset and knee and not exp: # only optimize exponent
+            def fixed_function(xs, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        elif offset and exp and not knee: # only optimize knee
+            def fixed_function(xs, knee):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        elif knee and exp and not offset: # only optimize offset
+            def fixed_function(xs, offset):
+                ys = np.zeros_like(xs)
+                return ys + offset + np.log10(knee**exp) - np.log10(knee**exp + xs**exp)
+        return fixed_function
+    except:
+        if not (offset or knee or exp):
+            print('no parameters are fixed')
+        elif offset and knee and exp:
+            print('all parameters are fixed')
+
+def get_fixed_mod_func(offset_fixed = False, knee_fixed = False, exp_fixed = False):
+    log_knee_fixed = knee_fixed
+    try:
+        if offset_fixed and not (knee_fixed or exp_fixed): # only fixed offset
+            def fixed_function(xs, log_knee, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset_fixed + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+        elif knee_fixed and not (offset_fixed or exp_fixed): # only fixed knee
+            def fixed_function(xs, offset, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset + log_knee_fixed * exp - np.log10(10**(log_knee_fixed * exp) + xs**exp)
+        elif exp_fixed and not (offset_fixed or knee_fixed): # only fixed exponent
+            def fixed_function(xs, offset, log_knee):
+                ys = np.zeros_like(xs)
+                return ys + offset + log_knee * exp_fixed - np.log10(10**(log_knee * exp_fixed) + xs**exp_fixed)
+        elif offset_fixed and knee_fixed and not exp_fixed: # only optimize exponent
+            def fixed_function(xs, exp):
+                ys = np.zeros_like(xs)
+                return ys + offset_fixed + log_knee_fixed * exp - np.log10(10**(log_knee_fixed * exp) + xs**exp)
+        elif offset_fixed and exp_fixed and not knee_fixed: # only optimize knee
+            def fixed_function(xs, log_knee):
+                ys = np.zeros_like(xs)
+                return ys + offset_fixed + log_knee * exp_fixed - np.log10(10**(log_knee * exp_fixed) + xs**exp_fixed)
+        elif knee_fixed and exp_fixed and not offset_fixed: # only optimize offset
+            def fixed_function(xs, offset):
+                ys = np.zeros_like(xs)
+                return ys + offset + log_knee_fixed * exp_fixed - np.log10(10**(log_knee_fixed * exp_fixed) + xs**exp_fixed)
+        return fixed_function
+    except:
+        if not (offset or knee or exp):
+            print('no parameters are fixed')
+        elif offset and knee and exp:
+            print('all parameters are fixed')
+
+# def get_fixed_mod_func(offset = False, knee = False, exp = False):
+#     log_knee = knee
+#     try:
+#         if offset and not (knee or exp): # only fixed offset
+#             def fixed_function(xs, knee, exp):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         elif knee and not (offset or exp): # only fixed knee
+#             def fixed_function(xs, offset, exp):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         elif exp and not (offset or knee): # only fixed exponent
+#             def fixed_function(xs, offset, knee):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         elif offset and knee and not exp: # only optimize exponent
+#             def fixed_function(xs, exp):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         elif offset and exp and not knee: # only optimize knee
+#             def fixed_function(xs, knee):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         elif knee and exp and not offset: # only optimize offset
+#             def fixed_function(xs, offset):
+#                 ys = np.zeros_like(xs)
+#                 return ys + offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp)
+#         return fixed_function
+#     except:
+#         if not (offset or knee or exp):
+#             print('no parameters are fixed')
+#         elif offset and knee and exp:
+#             print('all parameters are fixed')
 
 
 def expo_nk_function(xs, *params):
@@ -95,6 +245,7 @@ def expo_nk_function(xs, *params):
     ys = ys + offset - np.log10(xs**exp)
 
     return ys
+
 
 
 def linear_function(xs, *params):
@@ -198,6 +349,16 @@ def get_ap_func(aperiodic_mode):
         ap_func = expo_nk_function
     elif aperiodic_mode == 'knee':
         ap_func = expo_function
+    else:
+        raise ValueError("Requested aperiodic mode not understood.")
+
+    return ap_func
+
+def get_mod_ap_func(aperiodic_mode):
+    if aperiodic_mode == 'fixed':
+        raise ValueError("No non-knee parametrization for Alan's version")
+    elif aperiodic_mode == 'knee':
+        ap_func = mod_expo_function
     else:
         raise ValueError("Requested aperiodic mode not understood.")
 

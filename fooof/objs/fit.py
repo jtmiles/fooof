@@ -39,15 +39,9 @@ _maxfev : int
     The maximum number of calls to the curve fitting function.
 _error_metric : str
     The error metric to use for post-hoc measures of model fit error.
-
-Run Modes
----------
 _debug : bool
     Whether the object is set in debug mode.
     This should be controlled by using the `set_debug_mode` method.
-_check_data : bool
-    Whether to check added data for NaN or Inf values, and fail out if present.
-    This should be controlled by using the `set_check_data_mode` method.
 
 Code Notes
 ----------
@@ -58,27 +52,29 @@ import warnings
 from copy import deepcopy
 
 import numpy as np
+import functools
 from numpy.linalg import LinAlgError
 from scipy.optimize import curve_fit
+import scipy.stats
 
-from fooof.core.items import OBJ_DESC
-from fooof.core.info import get_indices
-from fooof.core.io import save_fm, load_json
-from fooof.core.reports import save_report_fm
-from fooof.core.modutils import copy_doc_func_to_method
-from fooof.core.utils import group_three, check_array_dim
-from fooof.core.funcs import gaussian_function, get_ap_func, infer_ap_func
-from fooof.core.errors import (FitError, NoModelError, DataError,
+from fooof_pls.core.items import OBJ_DESC
+from fooof_pls.core.info import get_indices
+from fooof_pls.core.io import save_fm, load_json
+from fooof_pls.core.reports import save_report_fm
+from fooof_pls.core.modutils import copy_doc_func_to_method
+from fooof_pls.core.utils import group_three, check_array_dim
+from fooof_pls.core.funcs import *
+from fooof_pls.core.errors import (FitError, NoModelError, DataError,
                                NoDataError, InconsistentDataError)
-from fooof.core.strings import (gen_settings_str, gen_results_fm_str,
+from fooof_pls.core.strings import (gen_settings_str, gen_results_fm_str,
                                 gen_issue_str, gen_width_warning_str)
 
-from fooof.plts.fm import plot_fm
-from fooof.plts.style import style_spectrum_plot
-from fooof.utils.data import trim_spectrum
-from fooof.utils.params import compute_gauss_std
-from fooof.data import FOOOFResults, FOOOFSettings, FOOOFMetaData
-from fooof.sim.gen import gen_freqs, gen_aperiodic, gen_periodic, gen_model
+from fooof_pls.plts.fm import plot_fm
+from fooof_pls.plts.style import style_spectrum_plot
+from fooof_pls.utils.data import trim_spectrum
+from fooof_pls.utils.params import compute_gauss_std
+from fooof_pls.data import FOOOFResults, FOOOFSettings, FOOOFMetaData
+from fooof_pls.sim.gen import gen_freqs, gen_aperiodic, gen_periodic, gen_model
 
 ###################################################################################################
 ###################################################################################################
@@ -155,9 +151,13 @@ class FOOOF():
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, peak_width_limits=(0.5, 12.0), max_n_peaks=np.inf, min_peak_height=0.0,
-                 peak_threshold=2.0, aperiodic_mode='fixed', verbose=True):
+                 peak_threshold=2.0, aperiodic_mode='fixed', verbose=True, error_metric = 'MAE', bw_edge = 0.1,
+
+                 mod = False, fixed = False, fixed_params = (None, None, None),  optimal_knee = 0):
         """Initialize object with desired settings."""
 
+        self.all_knees = []
+        # print('knee optimal: ', knee_optimal)
         # Set input settings
         self.peak_width_limits = peak_width_limits
         self.max_n_peaks = max_n_peaks
@@ -166,22 +166,55 @@ class FOOOF():
         self.aperiodic_mode = aperiodic_mode
         self.verbose = verbose
 
+        self.fixed = fixed
+        self.fixed_params = fixed_params
+        self.offset, self.knee, self.exp = fixed_params
+
+        # Guess parameters for aperiodic fitting, [offset, knee, exponent]
+            #   If offset guess is None, the first value of the power spectrum is used as offset guess
+            #   If exponent guess is None, the abs(log-log slope) of first & last points is used
+
+        if not mod:
+            self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
+            if not fixed:
+                self._ap_guess = (None, 0, None)
+            else: 
+                self._ap_guess = fixed_params
+        else:
+            self._ap_bounds = (np.array([-np.inf, -1, -np.inf]), 
+                                np.array([np.inf, 3, np.inf]))
+            
+            lower_bounds, upper_bounds = self._ap_bounds
+            lower_bounds = np.array([lower_bounds[i] for i in range(3) if not self.fixed_params[i] ])
+            upper_bounds = np.array([upper_bounds[i] for i in range(3) if not self.fixed_params[i] ])
+            self._ap_bounds = (lower_bounds, upper_bounds)
+
+            if not fixed:
+                self._ap_guess = (None, optimal_knee, None)
+            else: #fixed and mod:
+                if self.knee:
+                    self._ap_guess = fixed_params
+                else:
+                    self._ap_guess = (self.offset, optimal_knee, self.exp)
+        
+        self.mod = mod
+
+        # The error metric to calculate, post model fitting. See `_calc_error` for options
+        #   Note: this is used to check error post-hoc, not an objective function for fitting models
+        self._error_metric = error_metric
+
         ## PRIVATE SETTINGS
         # Percentile threshold, to select points from a flat spectrum for an initial aperiodic fit
         #   Points are selected at a low percentile value to restrict to non-peak points
         self._ap_percentile_thresh = 0.025
-        # Guess parameters for aperiodic fitting, [offset, knee, exponent]
-        #   If offset guess is None, the first value of the power spectrum is used as offset guess
-        #   If exponent guess is None, the abs(log-log slope) of first & last points is used
-        self._ap_guess = (None, 0, None)
         # Bounds for aperiodic fitting, as: ((offset_low_bound, knee_low_bound, exp_low_bound),
         #                                    (offset_high_bound, knee_high_bound, exp_high_bound))
         # By default, aperiodic fitting is unbound, but can be restricted here, if desired
         #   Even if fitting without knee, leave bounds for knee (they are dropped later)
-        self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
+        #self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
         # Threshold for how far a peak has to be from edge to keep.
         #   This is defined in units of gaussian standard deviation
-        self._bw_std_edge = 1.0
+        self._bw_std_edge = bw_edge
         # Degree of overlap between gaussians for one to be dropped
         #   This is defined in units of gaussian standard deviation
         self._gauss_overlap_thresh = 0.75
@@ -189,17 +222,10 @@ class FOOOF():
         self._cf_bound = 1.5
         # The maximum number of calls to the curve fitting function
         self._maxfev = 5000
-        # The error metric to calculate, post model fitting. See `_calc_error` for options
-        #   Note: this is for checking error post fitting, not an objective function for fitting
-        self._error_metric = 'MAE'
-
-        ## RUN MODES
-        # Set default debug mode - controls if an error is raised if model fitting is unsuccessful
+        # Set whether in debug mode, in which an error is raised if a model fit fails
         self._debug = False
-        # Set default check data mode - controls if an error is raised if NaN / Inf data are added
-        self._check_data = True
 
-        # Set internal settings, based on inputs, and initialize data & results attributes
+        # Set internal settings, based on inputs, & initialize data & results attributes
         self._reset_internal_settings()
         self._reset_data_results(True, True, True)
 
@@ -248,10 +274,14 @@ class FOOOF():
             # Bandwidth limits are given in 2-sided peak bandwidth
             #   Convert to gaussian std parameter limits
             self._gauss_std_limits = tuple([bwl / 2 for bwl in self.peak_width_limits])
+            # Bounds for aperiodic fitting. Drops bounds on knee parameter if not set to fit knee
+            self._ap_bounds = self._ap_bounds if self.aperiodic_mode == 'knee' \
+                else tuple(bound[0::2] for bound in self._ap_bounds)
 
         # Otherwise, assume settings are unknown (have been cleared) and set to None
         else:
             self._gauss_std_limits = None
+            self._ap_bounds = None
 
 
     def _reset_data_results(self, clear_freqs=False, clear_spectrum=False, clear_results=False):
@@ -292,7 +322,7 @@ class FOOOF():
             self._peak_fit = None
 
 
-    def add_data(self, freqs, power_spectrum, freq_range=None, clear_results=True):
+    def add_data(self, freqs, power_spectrum, freq_range=None):
         """Add data (frequencies, and power spectrum values) to the current object.
 
         Parameters
@@ -304,9 +334,6 @@ class FOOOF():
         freq_range : list of [float, float], optional
             Frequency range to restrict power spectrum to.
             If not provided, keeps the entire range.
-        clear_results : bool, optional, default: True
-            Whether to clear prior results, if any are present in the object.
-            This should only be set to False if data for the current results are being re-added.
 
         Notes
         -----
@@ -314,15 +341,13 @@ class FOOOF():
         they will be cleared by this method call.
         """
 
-        # If any data is already present, then clear previous data
-        # Also clear results, if present, unless indicated not to
+        # If any data is already present, then clear data & results
         #   This is to ensure object consistency of all data & results
-        self._reset_data_results(clear_freqs=self.has_data,
-                                 clear_spectrum=self.has_data,
-                                 clear_results=self.has_model and clear_results)
+        if np.any(self.freqs):
+            self._reset_data_results(True, True, True)
 
         self.freqs, self.power_spectrum, self.freq_range, self.freq_res = \
-            self._prepare_data(freqs, power_spectrum, freq_range, 1)
+            self._prepare_data(freqs, power_spectrum, freq_range, 1, self.verbose)
 
 
     def add_settings(self, fooof_settings):
@@ -442,17 +467,9 @@ class FOOOF():
         # In rare cases, the model fails to fit, and so uses try / except
         try:
 
-            # If not set to fail on NaN or Inf data at add time, check data here
-            #   This serves as a catch all for curve_fits which will fail given NaN or Inf
-            #   Because FitError's are by default caught, this allows fitting to continue
-            if not self._check_data:
-                if np.any(np.isinf(self.power_spectrum)) or np.any(np.isnan(self.power_spectrum)):
-                    raise FitError("Model fitting was skipped because there are NaN or Inf "
-                                   "values in the data, which preclude model fitting.")
-
             # Fit the aperiodic component
             self.aperiodic_params_ = self._robust_ap_fit(self.freqs, self.power_spectrum)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, mod = self.mod)
 
             # Flatten the power spectrum using fit aperiodic fit
             self._spectrum_flat = self.power_spectrum - self._ap_fit
@@ -470,7 +487,7 @@ class FOOOF():
             # Run final aperiodic fit on peak-removed power spectrum
             #   This overwrites previous aperiodic fit, and recomputes the flattened spectrum
             self.aperiodic_params_ = self._simple_ap_fit(self.freqs, self._spectrum_peak_rm)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, mod = self.mod)
             self._spectrum_flat = self.power_spectrum - self._ap_fit
 
             # Create full power_spectrum model fit
@@ -486,7 +503,7 @@ class FOOOF():
         except FitError:
 
             # If in debug mode, re-raise the error
-            if self._debug:
+            if True:#self._debug:
                 raise
 
             # Clear any interim model results that may have run
@@ -693,7 +710,7 @@ class FOOOF():
 
 
     def set_debug_mode(self, debug):
-        """Set debug mode, which controls if an error is raised if model fitting is unsuccessful.
+        """Set whether debug mode, wherein an error is raised if fitting is unsuccessful.
 
         Parameters
         ----------
@@ -704,18 +721,6 @@ class FOOOF():
         self._debug = debug
 
 
-    def set_check_data_mode(self, check_data):
-        """Set check data mode, which controls if an error is raised if NaN or Inf data are added.
-
-        Parameters
-        ----------
-        check_data : bool
-            Whether to run in check data mode.
-        """
-
-        self._check_data = check_data
-
-
     def _check_width_limits(self):
         """Check and warn about peak width limits / frequency resolution interaction."""
 
@@ -723,6 +728,21 @@ class FOOOF():
         if 1.5 * self.freq_res >= self.peak_width_limits[0]:
             print(gen_width_warning_str(self.freq_res, self.peak_width_limits[0]))
 
+    def _return_ap_params(self, optimized_params):
+        """returns both the optimized and fixed params in the order: offset, knee, exponent"""
+        if self.offset and not (self.knee or self.exp): # only fixed offset
+            aperiodic_params =  np.array([self.offset, optimized_params[0], optimized_params[1]])
+        elif self.knee and not (self.offset or self.exp): # only fixed knee
+            aperiodic_params =  np.array([optimized_params[0], self.knee, optimized_params[1]])
+        elif self.exp and not (self.offset or self.knee): # only fixed exponent
+            aperiodic_params =  np.array([optimized_params[0], optimized_params[1], self.exp])
+        elif self.offset and self.knee and not self.exp: # only optimize exponent
+            aperiodic_params =  np.array([self.offset, self.knee, optimized_params[0]])
+        elif self.offset and self.exp and not self.knee: # only optimize knee
+            aperiodic_params =  np.array([self.offset, optimized_params[0], self.exp])
+        elif self.knee and self.exp and not self.offset: # only optimize offset
+            aperiodic_params =  np.array([optimized_params[0], self.knee, self.exp])
+        return aperiodic_params
 
     def _simple_ap_fit(self, freqs, power_spectrum):
         """Fit the aperiodic component of the power spectrum.
@@ -739,21 +759,26 @@ class FOOOF():
         aperiodic_params : 1d array
             Parameter estimates for aperiodic fit.
         """
-
         # Get the guess parameters and/or calculate from the data, as needed
         #   Note that these are collected as lists, to concatenate with or without knee later
+
         off_guess = [power_spectrum[0] if not self._ap_guess[0] else self._ap_guess[0]]
         kne_guess = [self._ap_guess[1]] if self.aperiodic_mode == 'knee' else []
         exp_guess = [np.abs(self.power_spectrum[-1] - self.power_spectrum[0] /
                             np.log10(self.freqs[-1]) - np.log10(self.freqs[0]))
                      if not self._ap_guess[2] else self._ap_guess[2]]
+        # exp_guess = [np.abs((self.power_spectrum[-1] - self.power_spectrum[0]) /
+        #                      (np.log10(self.freqs[-1]) - np.log10(self.freqs[0])))
+        #              if not self._ap_guess[2] else self._ap_guess[2]]
+        
+        # print(np.abs(self.power_spectrum[-1] - self.power_spectrum[0] /
+        #                     np.log10(self.freqs[-1]) - np.log10(self.freqs[0])))
 
-        # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
-        ap_bounds = self._ap_bounds if self.aperiodic_mode == 'knee' \
-            else tuple(bound[0::2] for bound in self._ap_bounds)
+        # print(np.abs((self.power_spectrum[-1] - self.power_spectrum[0]) /
+        #                     (np.log10(self.freqs[-1]) - np.log10(self.freqs[0]))))
 
         # Collect together guess parameters
-        guess = np.array([off_guess + kne_guess + exp_guess])
+        guess  = np.array([off_guess + kne_guess + exp_guess]).flatten()
 
         # Ignore warnings that are raised in curve_fit
         #   A runtime warning can occur while exploring parameters in curve fitting
@@ -762,15 +787,39 @@ class FOOOF():
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
-                                                freqs, power_spectrum, p0=guess,
-                                                maxfev=self._maxfev, bounds=ap_bounds)
+                if not self.fixed and not self.mod: # full optimization (not fixed), og FOOOF (not mod)
+                    aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
+                                                    freqs, power_spectrum, p0=guess,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+
+                elif self.fixed and not self.mod: # only optimizing some, old FOOOF
+                    guess = np.array([guess[i] for i in range(3) if not self.fixed_params[i] ])
+                    optimized_params, pcov = curve_fit(get_fixed_expo_func(self.offset, self.knee, self.exp),
+                                                    freqs, power_spectrum, p0=guess,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+
+                    aperiodic_params = self._return_ap_params(optimized_params)
+                
+                elif not self.fixed and self.mod: # full optimization, new FOOOF
+                    aperiodic_params, _ = curve_fit(get_mod_ap_func(self.aperiodic_mode),
+                                                    freqs, power_spectrum, p0=guess,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+
+                elif self.fixed and self.mod: # only optimizing some, new FOOOF
+                    guess = np.array([guess[i] for i in range(3) if not self.fixed_params[i] ])
+                    optimized_params, pcov = curve_fit(get_fixed_mod_func(self.offset, self.knee, self.exp),
+                                                    freqs, power_spectrum, p0=guess,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+                    
+                    aperiodic_params = self._return_ap_params(optimized_params)
+                    self.all_knees.append(aperiodic_params[1])
+                    #print(optimized_params, ' ----> ', aperiodic_params, ) 
+
         except RuntimeError:
             raise FitError("Model fitting failed due to not finding parameters in "
                            "the simple aperiodic component fit.")
 
         return aperiodic_params
-
 
     def _robust_ap_fit(self, freqs, power_spectrum):
         """Fit the aperiodic component of the power spectrum robustly, ignoring outliers.
@@ -792,10 +841,9 @@ class FOOOF():
         FitError
             If the fitting encounters an error.
         """
-
         # Do a quick, initial aperiodic fit
-        popt = self._simple_ap_fit(freqs, power_spectrum)
-        initial_fit = gen_aperiodic(freqs, popt)
+        popt = self._simple_ap_fit(freqs, power_spectrum) # get your parameters
+        initial_fit = gen_aperiodic(freqs, popt, mod = self.mod) # use these to model PSD
 
         # Flatten power_spectrum based on initial aperiodic fit
         flatspec = power_spectrum - initial_fit
@@ -808,25 +856,44 @@ class FOOOF():
         perc_mask = flatspec <= perc_thresh
         freqs_ignore = freqs[perc_mask]
         spectrum_ignore = power_spectrum[perc_mask]
-
-        # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
-        ap_bounds = self._ap_bounds if self.aperiodic_mode == 'knee' \
-            else tuple(bound[0::2] for bound in self._ap_bounds)
-
         # Second aperiodic fit - using results of first fit as guess parameters
         #  See note in _simple_ap_fit about warnings
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
-                                                freqs_ignore, spectrum_ignore, p0=popt,
-                                                maxfev=self._maxfev, bounds=ap_bounds)
+                if not self.fixed and not self.mod: # full optimization (not fixed), og FOOOF (not mod)
+                    aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
+                                                    freqs_ignore, spectrum_ignore, p0=popt,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+
+                elif self.fixed and not self.mod: # only optimizing some, old FOOOF
+                    popt = np.array([popt[i] for i in range(3) if not self.fixed_params[i] ])
+                    optimized_params, _ = curve_fit(get_fixed_expo_func(self.offset, self.knee, self.exp),
+                                                    freqs, power_spectrum, p0=popt,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+                    aperiodic_params = self._return_ap_params(optimized_params)
+                
+                elif not self.fixed and self.mod: # full optimization, new FOOOF
+                    aperiodic_params, _ = curve_fit(get_mod_ap_func(self.aperiodic_mode),
+                                                    freqs, power_spectrum, p0=popt,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+
+                elif self.fixed and self.mod: # only optimizing some, new FOOOF
+                    popt = np.array([popt[i] for i in range(3) if not self.fixed_params[i] ])
+                    optimized_params, pcov = curve_fit(get_fixed_mod_func(self.offset, self.knee, self.exp),
+                                                    freqs, power_spectrum, p0=popt,
+                                                    maxfev=self._maxfev, bounds=self._ap_bounds)
+                    
+                    aperiodic_params = self._return_ap_params(optimized_params)
+                    #print(optimized_params, ' ----> ', aperiodic_params, )
+
+            self.all_knees.append(aperiodic_params[1])
+                            
         except RuntimeError:
             raise FitError("Model fitting failed due to not finding "
                            "parameters in the robust aperiodic fit.")
         except TypeError:
-            raise FitError("Model fitting failed due to sub-sampling "
-                           "in the robust aperiodic fit.")
+            raise FitError("Model fitting failed due to sub-sampling in the robust aperiodic fit.")
 
         return aperiodic_params
 
@@ -891,7 +958,7 @@ class FOOOF():
                 guess_std = compute_gauss_std(fwhm)
 
             except ValueError:
-                # This procedure can fail (very rarely), if both left & right inds end up as None
+                # This procedure can fail (extremely rarely), if both le & ri ind's end up as None
                 #   In this case, default the guess to the average of the peak width limits
                 guess_std = np.mean(self.peak_width_limits)
 
@@ -1067,21 +1134,21 @@ class FOOOF():
         Notes
         -----
         For any gaussians with an overlap that crosses the threshold,
-        the lowest height guess Gaussian is dropped.
+        the lowest height guess guassian is dropped.
         """
 
-        # Sort the peak guesses by increasing frequency
-        #   This is so adjacent peaks can be compared from right to left
+        # Sort the peak guesses by increasing frequency, so adjacenent peaks can
+        #   be compared from right to left.
         guess = sorted(guess, key=lambda x: float(x[0]))
 
         # Calculate standard deviation bounds for checking amount of overlap
-        #   The bounds are the gaussian frequency +/- gaussian standard deviation
+        #   The bounds are the gaussian frequncy +/- gaussian standard deviation
         bounds = [[peak[0] - peak[2] * self._gauss_overlap_thresh,
                    peak[0] + peak[2] * self._gauss_overlap_thresh] for peak in guess]
 
         # Loop through peak bounds, comparing current bound to that of next peak
         #   If the left peak's upper bound extends pass the right peaks lower bound,
-        #   then drop the Gaussian with the lower height
+        #   Then drop the guassian with the lower height.
         drop_inds = []
         for ind, b_0 in enumerate(bounds[:-1]):
             b_1 = bounds[ind + 1]
@@ -1129,10 +1196,8 @@ class FOOOF():
 
         if metric == 'MAE':
             self.error_ = np.abs(self.power_spectrum - self.fooofed_spectrum_).mean()
-
         elif metric == 'MSE':
             self.error_ = ((self.power_spectrum - self.fooofed_spectrum_) ** 2).mean()
-
         elif metric == 'RMSE':
             self.error_ = np.sqrt(((self.power_spectrum - self.fooofed_spectrum_) ** 2).mean())
 
@@ -1141,7 +1206,8 @@ class FOOOF():
             raise ValueError(msg)
 
 
-    def _prepare_data(self, freqs, power_spectrum, freq_range, spectra_dim=1):
+    @staticmethod
+    def _prepare_data(freqs, power_spectrum, freq_range, spectra_dim=1, verbose=True):
         """Prepare input data for adding to current object.
 
         Parameters
@@ -1155,6 +1221,8 @@ class FOOOF():
             Frequency range to restrict power spectrum to. If None, keeps the entire range.
         spectra_dim : int, optional, default: 1
             Dimensionality that the power spectra should have.
+        verbose : bool, optional
+            Whether to be verbose in printing out warnings.
 
         Returns
         -------
@@ -1209,7 +1277,7 @@ class FOOOF():
         #   Aperiodic fit gets an inf if freq of 0 is included, which leads to an error
         if freqs[0] == 0.0:
             freqs, power_spectrum = trim_spectrum(freqs, power_spectrum, [freqs[1], freqs.max()])
-            if self.verbose:
+            if verbose:
                 print("\nFOOOF WARNING: Skipping frequency == 0, "
                       "as this causes a problem with fitting.")
 
@@ -1220,13 +1288,12 @@ class FOOOF():
         # Log power values
         power_spectrum = np.log10(power_spectrum)
 
-        if self._check_data:
-            # Check if there are any infs / nans, and raise an error if so
-            if np.any(np.isinf(power_spectrum)) or np.any(np.isnan(power_spectrum)):
-                raise DataError("The input power spectra data, after logging, contains NaNs or Infs. "
-                                "This will cause the fitting to fail. "
-                                "One reason this can happen is if inputs are already logged. "
-                                "Inputs data should be in linear spacing, not log.")
+        # Check if there are any infs / nans, and raise an error if so
+        if np.any(np.isinf(power_spectrum)) or np.any(np.isnan(power_spectrum)):
+            raise DataError("The input power spectra data, after logging, contains NaNs or Infs. "
+                            "This will cause the fitting to fail. "
+                            "One reason this can happen is if inputs are already logged. "
+                            "Inputs data should be in linear spacing, not log.")
 
         return freqs, power_spectrum, freq_range, freq_res
 
