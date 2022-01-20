@@ -45,6 +45,35 @@ class FOOOFGroup(FOOOF):
         Relative threshold for detecting peaks, in units of standard deviation of the input data.
     aperiodic_mode : {'fixed', 'knee'}
         Which approach to take for fitting the aperiodic component.
+    ap_bounds : tuple of tuple of float, default: ((None, None), (-1, 3), (None, None))
+        Upper and lower bounds on fitting aperiodic component.
+            ((offset_low_bound, knee_low_bound, exp_low_bound),
+            (offset_high_bound, knee_high_bound, exp_high_bound))
+    bw_std_edge : float, default: 0.1
+        Bandwidth threshold for edge rejection of peaks, in units of gaussian standard deviation. 
+        i.e. Threshold for how far a peak has to be from edge to keep.
+        Formerly an internal setting.
+    error_metric : str, default: 'MAE'
+        The error metric to use for post-hoc measures of model fit error. See `_calc_error` for options
+        Formerly an internal setting.
+    lorentzian: boolean, default: True
+        TODO: replace need for aperiodic_mode
+    knee_initial: float, default: 1
+        Initial guess of the knee, in Hz,  before optimization
+    fmin: float, default: 1
+        Lowest captured frequency in spectrum in Hz
+        Used as upper bound when integrating for negative AUC for regularization
+    regularization_weight: float, default: 1
+        Constant weight applied to the regularization term
+    fixed: boolean, optional, default: False
+        Whether any of the aperiodic parameters should be held constant while optimizing the others
+        Parameter for Profile Likelihood Analysis
+    fixed_params: tuple, optional, default: (None, None, None)
+        Whether the offset, knee, exponent should be held constant during the fitting procedure 
+        Parameter for Profile Likelihood Analysis
+    fixed_n_peaks: bool or float, optional, default: False
+        The number of gaussians that must be fitted, in order for a fit to be valid
+        Parameter for Profile Likelihood Analysis
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.
 

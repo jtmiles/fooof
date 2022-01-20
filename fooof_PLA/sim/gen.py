@@ -290,7 +290,7 @@ def gen_group_power_spectra(n_spectra, freq_range, aperiodic_params, periodic_pa
         return freqs, powers
 
 
-def gen_aperiodic(freqs, aperiodic_params, mod = False, aperiodic_mode=None):
+def gen_aperiodic(freqs, aperiodic_params, lorentzian = False, aperiodic_mode=None):
     """Generate aperiodic values.
 
     Parameters
@@ -312,10 +312,10 @@ def gen_aperiodic(freqs, aperiodic_params, mod = False, aperiodic_mode=None):
     if not aperiodic_mode:
         aperiodic_mode = infer_ap_func(aperiodic_params)
 
-    if not mod:
-        ap_func = get_ap_func(aperiodic_mode)
-    else:
+    if lorentzian:
         ap_func = get_mod_ap_func(aperiodic_mode)
+    else:
+        ap_func = get_ap_func(aperiodic_mode)
 
     ap_vals = ap_func(freqs, *aperiodic_params)
 
@@ -445,7 +445,7 @@ def gen_rotated_power_vals(freqs, aperiodic_params, periodic_params, nlv, f_rota
     return powers
 
 
-def gen_model(freqs, aperiodic_params, periodic_params, mod = False, return_components=False):
+def gen_model(freqs, aperiodic_params, periodic_params, lorentzian = False, return_components=False):
     """Generate a power spectrum model for a given parameter definition.
 
     Parameters
@@ -478,7 +478,7 @@ def gen_model(freqs, aperiodic_params, periodic_params, mod = False, return_comp
     - Returns the power spectrum in log10 spacing, as is used in FOOOF models.
     """
 
-    ap_fit = gen_aperiodic(freqs, aperiodic_params, mod=mod)
+    ap_fit = gen_aperiodic(freqs, aperiodic_params, lorentzian = lorentzian)
     pe_fit = gen_periodic(freqs, np.ndarray.flatten(periodic_params))
     full_model = pe_fit + ap_fit
 

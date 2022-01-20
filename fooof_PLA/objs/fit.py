@@ -24,12 +24,8 @@ _ap_percentile_thresh : float
     Percentile threshold for finding peaks above the aperiodic component.
 _ap_guess : list of [float, float, float]
     Guess parameters for fitting the aperiodic component.
-_ap_bounds : tuple of tuple of float
-    Upper and lower bounds on fitting aperiodic component.
 _cf_bound : float
     Parameter bounds for center frequency when fitting gaussians.
-_bw_std_edge : float
-    Bandwidth threshold for edge rejection of peaks, in units of gaussian standard deviation.
 _gauss_overlap_thresh : float
     Degree of overlap (in units of standard deviation) between gaussian guesses to drop one.
 _gauss_std_limits : list of [float, float]
@@ -37,8 +33,6 @@ _gauss_std_limits : list of [float, float]
     This attribute is computed based on `peak_width_limits` and should not be updated directly.
 _maxfev : int
     The maximum number of calls to the curve fitting function.
-_error_metric : str
-    The error metric to use for post-hoc measures of model fit error.
 _debug : bool
     Whether the object is set in debug mode.
     This should be controlled by using the `set_debug_mode` method.
@@ -99,6 +93,35 @@ class FOOOF():
         Relative threshold for detecting peaks, in units of standard deviation of the input data.
     aperiodic_mode : {'fixed', 'knee'}
         Which approach to take for fitting the aperiodic component.
+    ap_bounds : tuple of tuple of float, default: ((None, None), (-1, 3), (None, None))
+        Upper and lower bounds on fitting aperiodic component.
+            ((offset_low_bound, knee_low_bound, exp_low_bound),
+            (offset_high_bound, knee_high_bound, exp_high_bound))
+    bw_std_edge : float, default: 0.1
+        Bandwidth threshold for edge rejection of peaks, in units of gaussian standard deviation. 
+        i.e. Threshold for how far a peak has to be from edge to keep.
+        Formerly an internal setting.
+    error_metric : str, default: 'MAE'
+        The error metric to use for post-hoc measures of model fit error. See `_calc_error` for options
+        Formerly an internal setting.
+    lorentzian: boolean, default: True
+        TODO: replace need for aperiodic_mode
+    knee_initial: float, default: 1
+        Initial guess of the knee, in Hz,  before optimization
+    fmin: float, default: 1
+        Lowest captured frequency in spectrum in Hz
+        Used as upper bound when integrating for negative AUC for regularization
+    regularization_weight: float, default: 1
+        Constant weight applied to the regularization term
+    fixed: boolean, optional, default: False
+        Whether any of the aperiodic parameters should be held constant while optimizing the others
+        Parameter for Profile Likelihood Analysis
+    fixed_params: tuple, optional, default: (None, None, None)
+        Whether the offset, knee, exponent should be held constant during the fitting procedure 
+        Parameter for Profile Likelihood Analysis
+    fixed_n_peaks: bool or float, optional, default: False
+        The number of gaussians that must be fitted, in order for a fit to be valid
+        Parameter for Profile Likelihood Analysis
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.
 
@@ -113,7 +136,7 @@ class FOOOF():
     freq_res : float
         Frequency resolution of the power spectrum.
     fooofed_spectrum_ : 1d array
-        The full model fit of the power spectrum, in log10 scale.
+        The full lorentzian-like model fit of the power spectrum, in log10 scale.
     aperiodic_params_ : 1d array
         Parameters that define the aperiodic fit. As [Offset, (Knee), Exponent].
         The knee parameter is only included if aperiodic component is fit with a knee.
@@ -150,15 +173,15 @@ class FOOOF():
     """
     # pylint: disable=attribute-defined-outside-init
 
-    def __init__(self, peak_width_limits=(0.5, 12.0), max_n_peaks=np.inf, min_peak_height=0.0,
-                 peak_threshold=2.0, aperiodic_mode='knee', verbose=True, error_metric = 'MAE', bw_std_edge = 0.1,
-
-                 mod = True, fixed = False, fixed_params = (None, None, None),  optimal_knee = 1,
-                 regularization_weight = 1, set_peaks = False, 
-                 ap_bounds = ((None, None), (-1, 3), (None, None))):
+    def __init__(self, peak_width_limits=(0.5, 12.0), max_n_peaks=np.inf, min_peak_height=0.0, peak_threshold=2.0, aperiodic_mode='knee',  
+                 ap_bounds = ((None, None), (-1, 3), (None, None)), bw_std_edge = 0.1, error_metric = 'MAE', 
+                 lorentzian = True, knee_initial = 1,  fmin = 1, regularization_weight = 1, 
+                 fixed = False, fixed_params = (None, None, None),  fixed_n_peaks = False, 
+                 verbose=True):
         """Initialize object with desired settings."""
 
         # Set input settings
+        # Original FOOOF input settings
         self.peak_width_limits = peak_width_limits
         self.max_n_peaks = max_n_peaks
         self.min_peak_height = min_peak_height
@@ -166,45 +189,45 @@ class FOOOF():
         self.aperiodic_mode = aperiodic_mode
         self.verbose = verbose
 
+        # Formerly private settings
+        self._error_metric = error_metric
+        self._bw_std_edge = bw_std_edge
+        # By default, knee parameter is bounded to physiologically meaningful values, 
+        self._ap_bounds = ap_bounds
+
+        # New FOOOF lorentzian settings
+        self.lorentzian = lorentzian
+        self.knee_initial = knee_initial
+        self.fmin = fmin
+        self.regularization_weight = regularization_weight
+
+        # Settings for Profile Likelihood Analysis - Underdevelopment
         self.fixed = fixed
         self.fixed_params = fixed_params
         self.offset, self.knee, self.exp = fixed_params
-        self.set_peaks = set_peaks
+        self.fixed_n_peaks = fixed_n_peaks
+
+        # Fix the bounds of an aperiodic parameter that will not be optimized
+        if fixed:
+            self._ap_bounds = tuple([self._ap_bounds[i] for i in range(3) if not self.fixed_params[i]])
 
         # Guess parameters for aperiodic fitting, [offset, knee, exponent]
             #   If offset guess is None, the first value of the power spectrum is used as offset guess
             #   If exponent guess is None, the abs(log-log slope) of first & last points is used
-
-        self._ap_bounds = ap_bounds
-        
         if not fixed:
-            self._ap_guess = (None, optimal_knee, None)
-        else: #fixed and mod:
-            self._ap_bounds = tuple([self._ap_bounds[i] for i in range(3) if not self.fixed_params[i]])
+            self._ap_guess = (None, self.knee_initial, None)
+        else: 
             if self.knee:
                 self._ap_guess = fixed_params
             else:
-                self._ap_guess = (self.offset, optimal_knee, self.exp)
+                self._ap_guess = (self.offset, self.knee_initial, self.exp)
         
-        self.mod = mod
-        self.regularization_weight = regularization_weight
-
-        # The error metric to calculate, post model fitting. See `_calc_error` for options
-        #   Note: this is used to check error post-hoc, not an objective function for fitting models
-        self._error_metric = error_metric
+        
 
         ## PRIVATE SETTINGS
         # Percentile threshold, to select points from a flat spectrum for an initial aperiodic fit
         #   Points are selected at a low percentile value to restrict to non-peak points
         self._ap_percentile_thresh = 0.025
-        # Bounds for aperiodic fitting, as: ((offset_low_bound, knee_low_bound, exp_low_bound),
-        #                                    (offset_high_bound, knee_high_bound, exp_high_bound))
-        # By default, aperiodic fitting is unbound, but can be restricted here, if desired
-        #   Even if fitting without knee, leave bounds for knee (they are dropped later)
-        #self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
-        # Threshold for how far a peak has to be from edge to keep.
-        #   This is defined in units of gaussian standard deviation
-        self._bw_std_edge = bw_std_edge
         # Degree of overlap between gaussians for one to be dropped
         #   This is defined in units of gaussian standard deviation
         self._gauss_overlap_thresh = 0.75
@@ -459,7 +482,7 @@ class FOOOF():
         
             # Fit the aperiodic component
             self.aperiodic_params_ = self._robust_ap_fit(self.freqs, self.power_spectrum)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, mod = self.mod)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, lorentzian = self.lorentzian)
 
             # Flatten the power spectrum using fit aperiodic fit
             self._spectrum_flat = self.power_spectrum - self._ap_fit
@@ -477,7 +500,7 @@ class FOOOF():
             # Run final aperiodic fit on peak-removed power spectrum
             #   This overwrites previous aperiodic fit, and recomputes the flattened spectrum
             self.aperiodic_params_ = self._simple_ap_fit(self.freqs, self._spectrum_peak_rm)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, mod = self.mod)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, lorentzian = self.lorentzian)
             #print("ap_fit[0]=" + str(self._ap_fit[0]))
             self._spectrum_flat = self.power_spectrum - self._ap_fit
 
@@ -740,7 +763,7 @@ class FOOOF():
         num_peaks = self.gaussian_params_.shape[0]
         for i in range(num_peaks): 
             mu, sigma = self.gaussian_params_[i, 0], self.gaussian_params_[i, 2]
-            AUC += scipy.stats.norm(mu, sigma).cdf(1)
+            AUC += scipy.stats.norm(mu, sigma).cdf(self.fmin)
         return AUC
     
 
@@ -759,7 +782,6 @@ class FOOOF():
         def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
             offset, knee, exp = ap_params
             model = func(X, offset, knee, exp)
-            #print('aperiodic regularization', reg_weight*self.negative_AUC())
             return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
         
         res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
@@ -782,7 +804,6 @@ class FOOOF():
         def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
             ap1, ap2 = ap_params
             model = func(X, ap1, ap2)
-            #print('aperiodic regularization fixed', reg_weight*self.negative_AUC())
             return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
         
         res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
@@ -803,35 +824,12 @@ class FOOOF():
 
         def cost(params, reg_weight = 1):  # simply use globally defined x and y
             model = gaussian_function(X, *params)
-            #print('gaussian regularization', reg_weight*self.negative_AUC())
             return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
         
         res = minimize(cost, x0 = params, args = reg_weight, bounds = bounds, 
                                                 options = {'maxiter': self._maxfev})
 
         return res.x
-    
-    # def aperiodic_regression_test(self, func, X, y, guess, reg_weight = 1):
-    #     """
-    #     args:
-    #         func: aperiodic model
-    #         X: frequencies vector (1D vector)
-    #         y: Observed power spectra (1D vector)
-    #         guess: initial guess of parameters (1d, length 3)
-    #         reg_weight: weight of regularization term - negative AUC
-
-    #     return: trained parameters
-    #     """
-        
-    #     def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
-    #         model = func(X, *guess)
-    #         print('regularization', reg_weight*self.negative_AUC())
-    #         return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
-        
-    #     res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
-    #                                             options = {'maxiter': self._maxfev})                      
-
-    #     return res.x
 
     def _simple_ap_fit(self, freqs, power_spectrum):
         """Fit the aperiodic component of the power spectrum.
@@ -852,8 +850,6 @@ class FOOOF():
         #   Note that these are collected as lists, to concatenate with or without knee later
 
         off_guess = [power_spectrum[0] if not self._ap_guess[0] else self._ap_guess[0]]
-        #kne_guess = [self._ap_guess[1]] if self.aperiodic_mode == 'knee' else []
-        #print(kne_guess)
         kne_guess = [self._ap_guess[1]] if self.aperiodic_mode != 'fixed' else []
 
         exp_guess = [np.abs(self.power_spectrum[-1] - self.power_spectrum[0]) /
@@ -911,7 +907,7 @@ class FOOOF():
         """
         # Do a quick, initial aperiodic fit
         popt = self._simple_ap_fit(freqs, power_spectrum) # get your parameters
-        initial_fit = gen_aperiodic(freqs, popt, mod = self.mod) # use these to model PSD
+        initial_fit = gen_aperiodic(freqs, popt, lorentzian = self.lorentzian) # use these to model PSD
 
         # Flatten power_spectrum based on initial aperiodic fit
         flatspec = power_spectrum - initial_fit
@@ -1051,11 +1047,11 @@ class FOOOF():
         else:
             gaussian_params = np.empty([0, 3])
 
-        if self.set_peaks == False:
+        if self.fixed_n_peaks == False:
             return gaussian_params
         # PLA
         else:
-            if len(guess) == self.set_peaks:
+            if len(guess) == self.fixed_n_peaks:
                 return gaussian_params
             else:
                 raise FitError
