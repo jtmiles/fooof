@@ -6,14 +6,20 @@ The tests here are not strong tests for accuracy.
 They serve rather as 'smoke tests', for if anything fails completely.
 """
 
+import os
+
 import numpy as np
 from numpy.testing import assert_equal
 
-from fooof.data import FOOOFResults
 from fooof.core.items import OBJ_DESC
+from fooof.core.modutils import safe_import
+from fooof.core.errors import DataError, NoDataError, InconsistentDataError
+from fooof.data import FOOOFResults
 from fooof.sim import gen_group_power_spectra
 
-from fooof.tests.settings import TEST_DATA_PATH
+pd = safe_import('pandas')
+
+from fooof.tests.settings import TEST_DATA_PATH, TEST_REPORTS_PATH
 from fooof.tests.tutils import default_group_params, plot_test
 
 from fooof.objs.group import *
@@ -208,6 +214,13 @@ def test_fg_print(tfg):
     tfg.print_results()
     assert True
 
+def test_save_model_report(tfg):
+
+    file_name = 'test_group_model_report'
+    tfg.save_model_report(0, file_name, TEST_REPORTS_PATH)
+
+    assert os.path.exists(os.path.join(TEST_REPORTS_PATH, file_name + '.pdf'))
+
 def test_get_results(tfg):
     """Check get results method."""
 
@@ -247,7 +260,7 @@ def test_fg_load():
     # Test that settings and data are None
     #   Except for aperiodic mode, which can be inferred from the data
     for setting in OBJ_DESC['settings']:
-        if setting is not 'aperiodic_mode':
+        if setting != 'aperiodic_mode':
             assert getattr(tfg, setting) is None
     assert tfg.power_spectra is None
 
@@ -349,3 +362,10 @@ def test_fg_get_group(tfg):
     # Check that the correct results are extracted
     assert [tfg.group_results[ind] for ind in inds1] == nfg1.group_results
     assert [tfg.group_results[ind] for ind in inds2] == nfg2.group_results
+
+def test_fg_to_df(tfg, tbands, skip_if_no_pandas):
+
+    df1 = tfg.to_df(2)
+    assert isinstance(df1, pd.DataFrame)
+    df2 = tfg.to_df(tbands)
+    assert isinstance(df2, pd.DataFrame)

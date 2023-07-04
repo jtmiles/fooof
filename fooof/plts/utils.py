@@ -8,9 +8,11 @@ They are not expected to be called directly by the user.
 
 from itertools import repeat
 from collections.abc import Iterator
+from functools import wraps
 
 import numpy as np
 
+from fooof.core.io import fname, fpath
 from fooof.core.modutils import safe_import
 from fooof.core.utils import resolve_aliases
 from fooof.plts.settings import PLT_ALPHA_LEVELS, PLT_ALIASES
@@ -171,3 +173,54 @@ def check_plot_kwargs(plot_kwargs, defaults):
             plot_kwargs[key] = value
 
     return plot_kwargs
+
+
+def savefig(func):
+    """Decorator function to save out figures."""
+
+    @wraps(func)
+    def decorated(*args, **kwargs):
+
+        # Grab file name and path arguments, if they are in kwargs
+        file_name = kwargs.pop('file_name', None)
+        file_path = kwargs.pop('file_path', None)
+
+        # Check for an explicit argument for whether to save figure or not
+        #   Defaults to saving when file name given (since bool(str)->True; bool(None)->False)
+        save_fig = kwargs.pop('save_fig', bool(file_name))
+
+        # Check any collect any other plot keywords
+        save_kwargs = kwargs.pop('save_kwargs', {})
+        save_kwargs.setdefault('bbox_inches', 'tight')
+
+        # Check and collect whether to close the plot
+        close = kwargs.pop('close', None)
+
+        func(*args, **kwargs)
+
+        if save_fig:
+            save_figure(file_name, file_path, close, **save_kwargs)
+
+    return decorated
+
+
+def save_figure(file_name, file_path=None, close=False, **save_kwargs):
+    """Save out a figure.
+
+    Parameters
+    ----------
+    file_name : str
+        File name for the figure file to save out.
+    file_path : str or Path
+        Path for where to save out the figure to.
+    close : bool, optional, default: False
+        Whether to close the plot after saving.
+    save_kwargs
+        Additional arguments to pass into the save function.
+    """
+
+    full_path = fpath(file_path, fname(file_name, 'png'))
+    plt.savefig(full_path, **save_kwargs)
+
+    if close:
+        plt.close()

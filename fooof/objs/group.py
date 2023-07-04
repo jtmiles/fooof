@@ -21,6 +21,7 @@ from fooof.core.reports import save_report_fg
 from fooof.core.strings import gen_results_fg_str
 from fooof.core.io import save_fg, load_jsonlines
 from fooof.core.modutils import copy_doc_func_to_method, safe_import
+from fooof.data.conversions import group_to_dataframe
 
 ###################################################################################################
 ###################################################################################################
@@ -354,7 +355,8 @@ class FOOOFGroup(FOOOF):
 
         Notes
         -----
-        For further description of the data you can extract, check the FOOOFResults documentation.
+        When extracting peak information ('peak_params' or 'gaussian_params'), an additional column
+        is appended to the returned array, indicating the index of the model that the peak came from.
         """
 
         if not self.has_model:
@@ -375,20 +377,17 @@ class FOOOFGroup(FOOOF):
         # As a special case, peak_params are pulled out in a way that appends
         #  an extra column, indicating which FOOOF run each peak comes from
         if name in ('peak_params', 'gaussian_params'):
-            out = np.array([np.insert(getattr(data, name), 3, index, axis=1)
-                            for index, data in enumerate(self.group_results)])
+
+            # Collect peak data, appending the index of the model it comes from
+            out = np.vstack([np.insert(getattr(data, name), 3, index, axis=1)
+                             for index, data in enumerate(self.group_results)])
+
             # This updates index to grab selected column, and the last column
             #  This last column is the 'index' column (FOOOF object source)
             if col is not None:
                 col = [col, -1]
         else:
             out = np.array([getattr(data, name) for data in self.group_results])
-
-        # Some data can end up as a list of separate arrays
-        #   If so, concatenate it all into one 2d array
-        if isinstance(out[0], np.ndarray):
-            out = np.concatenate([arr.reshape(1, len(arr)) \
-                if arr.ndim == 1 else arr for arr in out], 0)
 
         # Select out a specific column, if requested
         if col is not None:
@@ -398,15 +397,15 @@ class FOOOFGroup(FOOOF):
 
 
     @copy_doc_func_to_method(plot_fg)
-    def plot(self, save_fig=False, file_name=None, file_path=None):
+    def plot(self, save_fig=False, file_name=None, file_path=None, **plot_kwargs):
 
-        plot_fg(self, save_fig, file_name, file_path)
+        plot_fg(self, save_fig=save_fig, file_name=file_name, file_path=file_path, **plot_kwargs)
 
 
     @copy_doc_func_to_method(save_report_fg)
-    def save_report(self, file_name, file_path=None):
+    def save_report(self, file_name, file_path=None, add_settings=True):
 
-        save_report_fg(self, file_name, file_path)
+        save_report_fg(self, file_name, file_path, add_settings)
 
 
     @copy_doc_func_to_method(save_fg)
@@ -541,6 +540,49 @@ class FOOOFGroup(FOOOF):
         """
 
         print(gen_results_fg_str(self, concise))
+
+
+    def save_model_report(self, index, file_name, file_path=None, plt_log=False,
+                          add_settings=True, **plot_kwargs):
+        """"Save out an individual model report for a specified model fit.
+
+        Parameters
+        ----------
+        index : int
+            Index of the model fit to save out.
+        file_name : str
+            Name to give the saved out file.
+        file_path : str, optional
+            Path to directory to save to. If None, saves to current directory.
+        plt_log : bool, optional, default: False
+            Whether or not to plot the frequency axis in log space.
+        add_settings : bool, optional, default: True
+            Whether to add a print out of the model settings to the end of the report.
+        plot_kwargs : keyword arguments
+            Keyword arguments to pass into the plot method.
+        """
+
+        self.get_fooof(ind=index, regenerate=True).save_report(\
+            file_name, file_path, plt_log, **plot_kwargs)
+
+
+    def to_df(self, peak_org):
+        """Convert and extract the model results as a pandas object.
+
+        Parameters
+        ----------
+        peak_org : int or Bands
+            How to organize peaks.
+            If int, extracts the first n peaks.
+            If Bands, extracts peaks based on band definitions.
+
+        Returns
+        -------
+        pd.DataFrame
+            Model results organized into a pandas object.
+        """
+
+        return group_to_dataframe(self.get_results(), peak_org)
 
 
     def _fit(self, *args, **kwargs):

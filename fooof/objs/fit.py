@@ -74,10 +74,10 @@ from fooof.core.strings import (gen_settings_str, gen_results_fm_str,
                                 gen_issue_str, gen_width_warning_str)
 
 from fooof.plts.fm import plot_fm
-from fooof.plts.style import style_spectrum_plot
 from fooof.utils.data import trim_spectrum
 from fooof.utils.params import compute_gauss_std
 from fooof.data import FOOOFResults, FOOOFSettings, FOOOFMetaData
+from fooof.data.conversions import model_to_dataframe
 from fooof.sim.gen import gen_freqs, gen_aperiodic, gen_periodic, gen_model
 
 ###################################################################################################
@@ -98,9 +98,11 @@ class FOOOF():
     max_n_peaks : int, optional, default: inf
         Maximum number of peaks to fit.
     min_peak_height : float, optional, default: 0
-        Absolute threshold for detecting peaks, in units of the input data.
+        Absolute threshold for detecting peaks.
+        This threshold is defined in absolute units of the power spectrum (log power).
     peak_threshold : float, optional, default: 2.0
-        Relative threshold for detecting peaks, in units of standard deviation of the input data.
+        Relative threshold for detecting peaks.
+        This threshold is defined in relative units of the power spectrum (standard deviation).
     aperiodic_mode : {'fixed', 'knee'}
         Which approach to take for fitting the aperiodic component.
     verbose : bool, optional, default: True
@@ -196,7 +198,10 @@ class FOOOF():
         ## RUN MODES
         # Set default debug mode - controls if an error is raised if model fitting is unsuccessful
         self._debug = False
-        # Set default check data mode - controls if an error is raised if NaN / Inf data are added
+        # Set default data checking modes - controls which checks get run on input data
+        #   check_freqs: check the frequency values, and raises an error for uneven spacing
+        self._check_freqs = True
+        #   check_data: checks the power values and raises an error for any NaN / Inf values
         self._check_data = True
 
         # Set internal settings, based on inputs, and initialize data & results attributes
@@ -247,7 +252,7 @@ class FOOOF():
 
             # Bandwidth limits are given in 2-sided peak bandwidth
             #   Convert to gaussian std parameter limits
-            self._gauss_std_limits = tuple([bwl / 2 for bwl in self.peak_width_limits])
+            self._gauss_std_limits = tuple(bwl / 2 for bwl in self.peak_width_limits)
 
         # Otherwise, assume settings are unknown (have been cleared) and set to None
         else:
@@ -373,7 +378,8 @@ class FOOOF():
         self._check_loaded_results(fooof_result._asdict())
 
 
-    def report(self, freqs=None, power_spectrum=None, freq_range=None, plt_log=False):
+    def report(self, freqs=None, power_spectrum=None, freq_range=None,
+               plt_log=False, **plot_kwargs):
         """Run model fit, and display a report, which includes a plot, and printed results.
 
         Parameters
@@ -387,6 +393,8 @@ class FOOOF():
             If not provided, fits across the entire given range.
         plt_log : bool, optional, default: False
             Whether or not to plot the frequency axis in log space.
+        **plot_kwargs
+            Keyword arguments to pass into the plot method.
 
         Notes
         -----
@@ -394,7 +402,7 @@ class FOOOF():
         """
 
         self.fit(freqs, power_spectrum, freq_range)
-        self.plot(plt_log=plt_log)
+        self.plot(plt_log=plt_log, **plot_kwargs)
         self.print_results(concise=False)
 
 
@@ -586,9 +594,7 @@ class FOOOF():
 
         Notes
         -----
-        For further description of the data you can extract, check the FOOOFResults documentation.
-
-        If there is no data on periodic features, this method will return NaN.
+        If there are no fit peak (no peak parameters), this method will return NaN.
         """
 
         if not self.has_model:
@@ -635,18 +641,20 @@ class FOOOF():
     @copy_doc_func_to_method(plot_fm)
     def plot(self, plot_peaks=None, plot_aperiodic=True, plt_log=False,
              add_legend=True, save_fig=False, file_name=None, file_path=None,
-             ax=None, plot_style=style_spectrum_plot,
-             data_kwargs=None, model_kwargs=None, aperiodic_kwargs=None, peak_kwargs=None):
+             ax=None, data_kwargs=None, model_kwargs=None,
+             aperiodic_kwargs=None, peak_kwargs=None, **plot_kwargs):
 
-        plot_fm(self, plot_peaks, plot_aperiodic, plt_log, add_legend,
-                save_fig, file_name, file_path, ax, plot_style,
-                data_kwargs, model_kwargs, aperiodic_kwargs, peak_kwargs)
+        plot_fm(self, plot_peaks=plot_peaks, plot_aperiodic=plot_aperiodic, plt_log=plt_log,
+                add_legend=add_legend, save_fig=save_fig, file_name=file_name,
+                file_path=file_path, ax=ax, data_kwargs=data_kwargs, model_kwargs=model_kwargs,
+                aperiodic_kwargs=aperiodic_kwargs, peak_kwargs=peak_kwargs, **plot_kwargs)
 
 
     @copy_doc_func_to_method(save_report_fm)
-    def save_report(self, file_name, file_path=None, plt_log=False):
+    def save_report(self, file_name, file_path=None, plt_log=False,
+                    add_settings=True, **plot_kwargs):
 
-        save_report_fm(self, file_name, file_path, plt_log)
+        save_report_fm(self, file_name, file_path, plt_log, add_settings, **plot_kwargs)
 
 
     @copy_doc_func_to_method(save_fm)
@@ -716,6 +724,25 @@ class FOOOF():
         self._check_data = check_data
 
 
+    def to_df(self, peak_org):
+        """Convert and extract the model results as a pandas object.
+
+        Parameters
+        ----------
+        peak_org : int or Bands
+            How to organize peaks.
+            If int, extracts the first n peaks.
+            If Bands, extracts peaks based on band definitions.
+
+        Returns
+        -------
+        pd.Series
+            Model results organized into a pandas object.
+        """
+
+        return model_to_dataframe(self.get_results(), peak_org)
+
+
     def _check_width_limits(self):
         """Check and warn about peak width limits / frequency resolution interaction."""
 
@@ -744,8 +771,8 @@ class FOOOF():
         #   Note that these are collected as lists, to concatenate with or without knee later
         off_guess = [power_spectrum[0] if not self._ap_guess[0] else self._ap_guess[0]]
         kne_guess = [self._ap_guess[1]] if self.aperiodic_mode == 'knee' else []
-        exp_guess = [np.abs(self.power_spectrum[-1] - self.power_spectrum[0] /
-                            np.log10(self.freqs[-1]) - np.log10(self.freqs[0]))
+        exp_guess = [np.abs((self.power_spectrum[-1] - self.power_spectrum[0]) /
+                            (np.log10(self.freqs[-1]) - np.log10(self.freqs[0])))
                      if not self._ap_guess[2] else self._ap_guess[2]]
 
         # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
@@ -753,7 +780,7 @@ class FOOOF():
             else tuple(bound[0::2] for bound in self._ap_bounds)
 
         # Collect together guess parameters
-        guess = np.array([off_guess + kne_guess + exp_guess])
+        guess = np.array(off_guess + kne_guess + exp_guess)
 
         # Ignore warnings that are raised in curve_fit
         #   A runtime warning can occur while exploring parameters in curve fitting
@@ -765,9 +792,10 @@ class FOOOF():
                 aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
                                                 freqs, power_spectrum, p0=guess,
                                                 maxfev=self._maxfev, bounds=ap_bounds)
-        except RuntimeError:
-            raise FitError("Model fitting failed due to not finding parameters in "
-                           "the simple aperiodic component fit.")
+        except RuntimeError as excp:
+            error_msg = ("Model fitting failed due to not finding parameters in "
+                         "the simple aperiodic component fit.")
+            raise FitError(error_msg) from excp
 
         return aperiodic_params
 
@@ -821,12 +849,14 @@ class FOOOF():
                 aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
                                                 freqs_ignore, spectrum_ignore, p0=popt,
                                                 maxfev=self._maxfev, bounds=ap_bounds)
-        except RuntimeError:
-            raise FitError("Model fitting failed due to not finding "
-                           "parameters in the robust aperiodic fit.")
-        except TypeError:
-            raise FitError("Model fitting failed due to sub-sampling "
-                           "in the robust aperiodic fit.")
+        except RuntimeError as excp:
+            error_msg = ("Model fitting failed due to not finding "
+                         "parameters in the robust aperiodic fit.")
+            raise FitError(error_msg) from excp
+        except TypeError as excp:
+            error_msg = ("Model fitting failed due to sub-sampling "
+                         "in the robust aperiodic fit.")
+            raise FitError(error_msg) from excp
 
         return aperiodic_params
 
@@ -955,8 +985,8 @@ class FOOOF():
 
         # Unpacks the embedded lists into flat tuples
         #   This is what the fit function requires as input
-        gaus_param_bounds = (tuple([item for sublist in lo_bound for item in sublist]),
-                             tuple([item for sublist in hi_bound for item in sublist]))
+        gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
+                             tuple(item for sublist in hi_bound for item in sublist))
 
         # Flatten guess, for use with curve fit
         guess = np.ndarray.flatten(guess)
@@ -965,13 +995,15 @@ class FOOOF():
         try:
             gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
                                            p0=guess, maxfev=self._maxfev, bounds=gaus_param_bounds)
-        except RuntimeError:
-            raise FitError("Model fitting failed due to not finding "
-                           "parameters in the peak component fit.")
-        except LinAlgError:
-            raise FitError("Model fitting failed due to a LinAlgError during peak fitting. "
-                           "This can happen with settings that are too liberal, leading, "
-                           "to a large number of guess peaks that cannot be fit together.")
+        except RuntimeError as excp:
+            error_msg = ("Model fitting failed due to not finding "
+                         "parameters in the peak component fit.")
+            raise FitError(error_msg) from excp
+        except LinAlgError as excp:
+            error_msg = ("Model fitting failed due to a LinAlgError during peak fitting. "
+                         "This can happen with settings that are too liberal, leading, "
+                         "to a large number of guess peaks that cannot be fit together.")
+            raise FitError(error_msg) from excp
 
         # Re-organize params into 2d matrix
         gaussian_params = np.array(group_three(gaussian_params))
@@ -1007,18 +1039,16 @@ class FOOOF():
         with `freqs`, `fooofed_spectrum_` and `_ap_fit` all required to be available.
         """
 
-        peak_params = np.empty([0, 3])
+        peak_params = np.empty((len(gaus_params), 3))
 
         for ii, peak in enumerate(gaus_params):
 
             # Gets the index of the power_spectrum at the frequency closest to the CF of the peak
-            ind = min(range(len(self.freqs)), key=lambda ii: abs(self.freqs[ii] - peak[0]))
+            ind = np.argmin(np.abs(self.freqs - peak[0]))
 
             # Collect peak parameter data
-            peak_params = np.vstack((peak_params,
-                                     [peak[0],
-                                      self.fooofed_spectrum_[ind] - self._ap_fit[ind],
-                                      peak[2] * 2]))
+            peak_params[ii] = [peak[0], self.fooofed_spectrum_[ind] - self._ap_fit[ind],
+                               peak[2] * 2]
 
         return peak_params
 
@@ -1037,8 +1067,8 @@ class FOOOF():
             Guess parameters for gaussian peak fits. Shape: [n_peaks, 3].
         """
 
-        cf_params = [item[0] for item in guess]
-        bw_params = [item[2] * self._bw_std_edge for item in guess]
+        cf_params = guess[:, 0]
+        bw_params = guess[:, 2] * self._bw_std_edge
 
         # Check if peaks within drop threshold from the edge of the frequency range
         keep_peak = \
@@ -1112,7 +1142,10 @@ class FOOOF():
         Parameters
         ----------
         metric : {'MAE', 'MSE', 'RMSE'}, optional
-            Which error measure to calculate.
+            Which error measure to calculate:
+            * 'MAE' : mean absolute error
+            * 'MSE' : mean squared error
+            * 'RMSE' : root mean squared error
 
         Raises
         ------
@@ -1137,8 +1170,8 @@ class FOOOF():
             self.error_ = np.sqrt(((self.power_spectrum - self.fooofed_spectrum_) ** 2).mean())
 
         else:
-            msg = "Error metric '{}' not understood or not implemented.".format(metric)
-            raise ValueError(msg)
+            error_msg = "Error metric '{}' not understood or not implemented.".format(metric)
+            raise ValueError(error_msg)
 
 
     def _prepare_data(self, freqs, power_spectrum, freq_range, spectra_dim=1):
@@ -1220,13 +1253,22 @@ class FOOOF():
         # Log power values
         power_spectrum = np.log10(power_spectrum)
 
+        ## Data checks - run checks on inputs based on check modes
+
+        if self._check_freqs:
+            # Check if the frequency data is unevenly spaced, and raise an error if so
+            freq_diffs = np.diff(freqs)
+            if not np.all(np.isclose(freq_diffs, freq_res)):
+                raise DataError("The input frequency values are not evenly spaced. "
+                                "The model expects equidistant frequency values in linear space.")
         if self._check_data:
             # Check if there are any infs / nans, and raise an error if so
             if np.any(np.isinf(power_spectrum)) or np.any(np.isnan(power_spectrum)):
-                raise DataError("The input power spectra data, after logging, contains NaNs or Infs. "
-                                "This will cause the fitting to fail. "
-                                "One reason this can happen is if inputs are already logged. "
-                                "Inputs data should be in linear spacing, not log.")
+                error_msg = ("The input power spectra data, after logging, contains NaNs or Infs. "
+                             "This will cause the fitting to fail. "
+                             "One reason this can happen is if inputs are already logged. "
+                             "Inputs data should be in linear spacing, not log.")
+                raise DataError(error_msg)
 
         return freqs, power_spectrum, freq_range, freq_res
 
