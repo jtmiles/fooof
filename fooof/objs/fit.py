@@ -59,7 +59,8 @@ from copy import deepcopy
 
 import numpy as np
 from numpy.linalg import LinAlgError
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize
+import scipy.stats
 
 from fooof.core.items import OBJ_DESC
 from fooof.core.info import get_indices
@@ -67,7 +68,7 @@ from fooof.core.io import save_fm, load_json
 from fooof.core.reports import save_report_fm
 from fooof.core.modutils import copy_doc_func_to_method
 from fooof.core.utils import group_three, check_array_dim
-from fooof.core.funcs import gaussian_function, get_ap_func, infer_ap_func
+from fooof.core.funcs import gaussian_function, get_ap_func, lorentzian_function, infer_ap_func
 from fooof.core.errors import (FitError, NoModelError, DataError,
                                NoDataError, InconsistentDataError)
 from fooof.core.strings import (gen_settings_str, gen_results_fm_str,
@@ -103,7 +104,7 @@ class FOOOF():
     peak_threshold : float, optional, default: 2.0
         Relative threshold for detecting peaks.
         This threshold is defined in relative units of the power spectrum (standard deviation).
-    aperiodic_mode : {'fixed', 'knee'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian'}
         Which approach to take for fitting the aperiodic component.
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.
@@ -157,7 +158,7 @@ class FOOOF():
     # pylint: disable=attribute-defined-outside-init
 
     def __init__(self, peak_width_limits=(0.5, 12.0), max_n_peaks=np.inf, min_peak_height=0.0,
-                 peak_threshold=2.0, aperiodic_mode='fixed', verbose=True):
+                 peak_threshold=2.0, aperiodic_mode='fixed', regularization_weight = 0, verbose=True):
         """Initialize object with desired settings."""
 
         # Set input settings
@@ -175,12 +176,20 @@ class FOOOF():
         # Guess parameters for aperiodic fitting, [offset, knee, exponent]
         #   If offset guess is None, the first value of the power spectrum is used as offset guess
         #   If exponent guess is None, the abs(log-log slope) of first & last points is used
-        self._ap_guess = (None, 0, None)
+        if aperiodic_mode in ['fixed', 'knee']:
+            self._ap_guess = (None, 0, None)
+        elif aperiodic_mode == 'lorentzian':
+            self._ap_guess = (None, 1, None)
         # Bounds for aperiodic fitting, as: ((offset_low_bound, knee_low_bound, exp_low_bound),
         #                                    (offset_high_bound, knee_high_bound, exp_high_bound))
         # By default, aperiodic fitting is unbound, but can be restricted here, if desired
         #   Even if fitting without knee, leave bounds for knee (they are dropped later)
-        self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
+        if aperiodic_mode in ['fixed', 'knee']:
+            self._ap_bounds = ((-np.inf, -np.inf, -np.inf), (np.inf, np.inf, np.inf))
+        #   Different format because these bounds will go to minimize rather than curvefit
+        elif aperiodic_mode == 'lorentzian':
+            self._ap_bounds =  ((None, None), (-1, 3), (None, None))
+
         # Threshold for how far a peak has to be from edge to keep.
         #   This is defined in units of gaussian standard deviation
         self._bw_std_edge = 1.0
@@ -189,11 +198,15 @@ class FOOOF():
         self._gauss_overlap_thresh = 0.75
         # Parameter bounds for center frequency when fitting gaussians, in terms of +/- std dev
         self._cf_bound = 1.5
+        # Lowest captured frequency in spectrum in Hz - Used as upper bound when integrating for negative AUC for regularization
+        self.fmin = 1
         # The maximum number of calls to the curve fitting function
         self._maxfev = 5000
         # The error metric to calculate, post model fitting. See `_calc_error` for options
         #   Note: this is for checking error post fitting, not an objective function for fitting
         self._error_metric = 'MAE'
+        # Regularization if Lorentzian Aperiodic Mode is used. Default - not implemented since regulatization = 0
+        self.regularization_weight = regularization_weight
 
         ## RUN MODES
         # Set default debug mode - controls if an error is raised if model fitting is unsuccessful
@@ -295,7 +308,62 @@ class FOOOF():
             self._spectrum_peak_rm = None
             self._ap_fit = None
             self._peak_fit = None
+    
+    def negative_AUC(self):
+        AUC = 0
+        num_peaks = self.gaussian_params_.shape[0]
+        for i in range(num_peaks): 
+            mu, sigma = self.gaussian_params_[i, 0], self.gaussian_params_[i, 2]
+            AUC += scipy.stats.norm(mu, sigma).cdf(self.fmin)
+        return AUC
+    
 
+    def aperiodic_regression(self, func, X, y, guess, reg_weight = 1):
+        """
+        args:
+            func: aperiodic model
+            X: frequencies vector (1D vector)
+            y: Observed power spectra (1D vector)
+            guess: initial guess of parameters (1d, length 3)
+            reg_weight: weight of regularization term - negative AUC
+
+        return: trained parameters
+        """
+
+        print('guess', guess)
+        print('ap bounds', self._ap_bounds)
+        
+        def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
+            offset, knee, exp = ap_params
+            model = func(X, offset, knee, exp)
+            return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
+        
+        res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
+                                                options = {'maxiter': self._maxfev})                      
+
+        return res.x
+    
+    def gaussian_regression(self, X, y, params, reg_weight = 1, bounds = None):
+        """
+        args:
+            X: frequencies vector (1D vector)
+            y: Observed power spectra (1D vector)
+            guess: initial guess of parameters (1d, of variable length, multiple of 3)
+            reg_weight: weight of regularization term - negative AUC
+
+        return: trained parameters
+        """
+
+        def cost(params, reg_weight = 1):  # simply use globally defined x and y
+            model = gaussian_function(X, *params)
+            return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
+        print('params', params)
+        print('bounds', bounds)
+        
+        res = minimize(cost, x0 = params, args = reg_weight, bounds = bounds, 
+                                                options = {'maxiter': self._maxfev})
+
+        return res.x
 
     def add_data(self, freqs, power_spectrum, freq_range=None, clear_results=True):
         """Add data (frequencies, and power spectrum values) to the current object.
@@ -770,14 +838,16 @@ class FOOOF():
         # Get the guess parameters and/or calculate from the data, as needed
         #   Note that these are collected as lists, to concatenate with or without knee later
         off_guess = [power_spectrum[0] if not self._ap_guess[0] else self._ap_guess[0]]
-        kne_guess = [self._ap_guess[1]] if self.aperiodic_mode == 'knee' else []
+        kne_guess = [self._ap_guess[1]] if self.aperiodic_mode in ['knee', 'lorentzian'] else []
         exp_guess = [np.abs((self.power_spectrum[-1] - self.power_spectrum[0]) /
                             (np.log10(self.freqs[-1]) - np.log10(self.freqs[0])))
                      if not self._ap_guess[2] else self._ap_guess[2]]
 
         # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
-        ap_bounds = self._ap_bounds if self.aperiodic_mode == 'knee' \
-            else tuple(bound[0::2] for bound in self._ap_bounds)
+        if self.aperiodic_mode == 'fixed':
+            ap_bounds = tuple(bound[0::2] for bound in self._ap_bounds)
+        elif self.aperiodic_mode in ['knee', 'lorentzian']:
+            ap_bounds = self._ap_bounds 
 
         # Collect together guess parameters
         guess = np.array(off_guess + kne_guess + exp_guess)
@@ -789,9 +859,14 @@ class FOOOF():
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
-                                                freqs, power_spectrum, p0=guess,
-                                                maxfev=self._maxfev, bounds=ap_bounds)
+                if self.aperiodic_mode in ['fixed', 'knee']:
+                    aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
+                                                    freqs, power_spectrum, p0=guess,
+                                                    maxfev=self._maxfev, bounds=ap_bounds)
+                elif self.aperiodic_mode == 'lorentzian':
+                    aperiodic_params = self.aperiodic_regression(lorentzian_function,
+                                                    freqs, power_spectrum, np.array(guess),
+                                                    self.regularization_weight)
         except RuntimeError as excp:
             error_msg = ("Model fitting failed due to not finding parameters in "
                          "the simple aperiodic component fit.")
@@ -838,17 +913,24 @@ class FOOOF():
         spectrum_ignore = power_spectrum[perc_mask]
 
         # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
-        ap_bounds = self._ap_bounds if self.aperiodic_mode == 'knee' \
-            else tuple(bound[0::2] for bound in self._ap_bounds)
+        if self.aperiodic_mode == 'fixed':
+            ap_bounds = tuple(bound[0::2] for bound in self._ap_bounds)
+        elif self.aperiodic_mode in ['knee', 'lorentzian']:
+            ap_bounds = self._ap_bounds 
 
         # Second aperiodic fit - using results of first fit as guess parameters
         #  See note in _simple_ap_fit about warnings
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
-                                                freqs_ignore, spectrum_ignore, p0=popt,
-                                                maxfev=self._maxfev, bounds=ap_bounds)
+                if self.aperiodic_mode in ['fixed', 'knee']:
+                    aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
+                                                    freqs_ignore, spectrum_ignore, p0=popt,
+                                                    maxfev=self._maxfev, bounds=ap_bounds)
+                elif self.aperiodic_mode == 'lorentzian':
+                    aperiodic_params = self.aperiodic_regression(lorentzian_function,
+                                                    freqs_ignore, spectrum_ignore, popt,
+                                                    self.regularization_weight)
         except RuntimeError as excp:
             error_msg = ("Model fitting failed due to not finding "
                          "parameters in the robust aperiodic fit.")
@@ -882,6 +964,7 @@ class FOOOF():
         # Find peak: Loop through, finding a candidate peak, and fitting with a guess gaussian
         #   Stopping procedures: limit on # of peaks, or relative or absolute height thresholds
         while len(guess) < self.max_n_peaks:
+            print('loop to find peaks')
 
             # Find candidate peak - the maximum point of the flattened spectrum
             max_ind = np.argmax(flat_iter)
@@ -971,6 +1054,7 @@ class FOOOF():
         #     ((cf_low_peak1, height_low_peak1, bw_low_peak1, *repeated for n_peaks*),
         #      (cf_high_peak1, height_high_peak1, bw_high_peak, *repeated for n_peaks*))
         #     ^where each value sets the bound on the specified parameter
+        print('_fit_peak_guess', guess)
         lo_bound = [[peak[0] - 2 * self._cf_bound * peak[2], 0, self._gauss_std_limits[0]]
                     for peak in guess]
         hi_bound = [[peak[0] + 2 * self._cf_bound * peak[2], np.inf, self._gauss_std_limits[1]]
@@ -982,19 +1066,40 @@ class FOOOF():
             [self.freq_range[0], *bound[1:]] for bound in lo_bound]
         hi_bound = [bound if bound[0] < self.freq_range[1] else \
             [self.freq_range[1], *bound[1:]] for bound in hi_bound]
+        print('lo bounds', lo_bound)
+        print('hi bounds', hi_bound)
 
         # Unpacks the embedded lists into flat tuples
         #   This is what the fit function requires as input
-        gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
-                             tuple(item for sublist in hi_bound for item in sublist))
+        if self.aperiodic_mode in ['fixed', 'knee']:
+            gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
+                                tuple(item for sublist in hi_bound for item in sublist))
+        elif self.aperiodic_mode == 'lorentzian':
+            lo_bound_flatten = np.array(lo_bound).flatten()
+            hi_bound_flatten = np.array(hi_bound).flatten()
+            gaus_param_bounds = []
+            for i in range(len(lo_bound_flatten)):
+                lo_bound_oi = lo_bound_flatten[i]
+                hi_bound_oi = hi_bound_flatten[i]
+                if lo_bound_oi in [np.inf, -np.inf]:
+                    lo_bound_oi = None
+                if hi_bound_oi in [np.inf, -np.inf]:
+                    hi_bound_oi = None
+                gaus_param_bounds.append((lo_bound_oi, hi_bound_oi))
+            print('gaus_param_bounds', gaus_param_bounds)
 
         # Flatten guess, for use with curve fit
         guess = np.ndarray.flatten(guess)
 
         # Fit the peaks
         try:
-            gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
-                                           p0=guess, maxfev=self._maxfev, bounds=gaus_param_bounds)
+            if self.aperiodic_mode in ['fixed', 'knee']:
+                gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
+                                            p0=guess, maxfev=self._maxfev, bounds=gaus_param_bounds)
+            elif self.aperiodic_mode == 'lorentzian':
+                gaussian_params = self.gaussian_regression(self.freqs, self._spectrum_flat, 
+                                                        list(guess), self.regularization_weight, 
+                                                        tuple(gaus_param_bounds),)
         except RuntimeError as excp:
             error_msg = ("Model fitting failed due to not finding "
                          "parameters in the peak component fit.")
@@ -1004,6 +1109,8 @@ class FOOOF():
                          "This can happen with settings that are too liberal, leading, "
                          "to a large number of guess peaks that cannot be fit together.")
             raise FitError(error_msg) from excp
+        except Exception as e:
+            print(e)
 
         # Re-organize params into 2d matrix
         gaussian_params = np.array(group_three(gaussian_params))
@@ -1339,4 +1446,4 @@ class FOOOF():
         """Regenerate model fit from parameters."""
 
         self.fooofed_spectrum_, self._peak_fit, self._ap_fit = gen_model(
-            self.freqs, self.aperiodic_params_, self.gaussian_params_, return_components=True)
+            self.freqs, self.aperiodic_params_, self.aperiodic_mode, self.gaussian_params_, return_components=True)

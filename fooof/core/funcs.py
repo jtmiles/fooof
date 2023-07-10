@@ -40,6 +40,32 @@ def gaussian_function(xs, *params):
 
     return ys
 
+def lorentzian_function(xs, offset, log_knee, exp):
+    """Lorentzian fitting function, for fitting aperiodic component with a 'log knee'.
+
+    NOTE: this function requires linear frequency (not log).
+
+    Parameters
+    ----------
+    xs : 1d array
+        Input x-axis values.
+    offset, log_knee, exp : floats
+        Parameters (offset, knee, exp) that define Lorentzian function:
+        y = offset + log_knee * exp - np.log10(10**(log_knee * exp) + xs**exp
+
+    Returns
+    -------
+    ys : 1d array
+        Output values for lorentzian function.
+    """
+
+    ys = np.zeros_like(xs)
+    fmin = 1 #np.min(xs)
+
+    ys = ys + offset + np.log10(10**(log_knee * exp) + fmin**exp) - np.log10(10**(log_knee * exp) + xs**exp)
+
+    return ys
+
 
 def expo_function(xs, *params):
     """Exponential fitting function, for fitting aperiodic component with a 'knee'.
@@ -198,6 +224,8 @@ def get_ap_func(aperiodic_mode):
         ap_func = expo_nk_function
     elif aperiodic_mode == 'knee':
         ap_func = expo_function
+    elif aperiodic_mode == 'lorentzian':
+        ap_func = lorentzian_function
     else:
         raise ValueError("Requested aperiodic mode not understood.")
 

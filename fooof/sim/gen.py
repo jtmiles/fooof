@@ -299,7 +299,7 @@ def gen_aperiodic(freqs, aperiodic_params, aperiodic_mode=None):
         Frequency vector to create aperiodic component for.
     aperiodic_params : list of float
         Parameters that define the aperiodic component.
-    aperiodic_mode : {'fixed', 'knee'}, optional
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian'}, optional
         Which kind of aperiodic component to generate.
         If not provided, is inferred from the parameters.
 
@@ -442,7 +442,7 @@ def gen_rotated_power_vals(freqs, aperiodic_params, periodic_params, nlv, f_rota
     return powers
 
 
-def gen_model(freqs, aperiodic_params, periodic_params, return_components=False):
+def gen_model(freqs, aperiodic_params, aperiodic_mode, periodic_params, return_components=False):
     """Generate a power spectrum model for a given parameter definition.
 
     Parameters
@@ -475,7 +475,7 @@ def gen_model(freqs, aperiodic_params, periodic_params, return_components=False)
     - Returns the power spectrum in log10 spacing, as is used in FOOOF models.
     """
 
-    ap_fit = gen_aperiodic(freqs, aperiodic_params)
+    ap_fit = gen_aperiodic(freqs, aperiodic_params, aperiodic_mode)
     pe_fit = gen_periodic(freqs, np.ndarray.flatten(periodic_params))
     full_model = pe_fit + ap_fit
 
