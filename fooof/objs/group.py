@@ -44,7 +44,7 @@ class FOOOFGroup(FOOOF):
         Absolute threshold for detecting peaks, in units of the input data.
     peak_threshold : float, optional, default: 2.0
         Relative threshold for detecting peaks, in units of standard deviation of the input data.
-    aperiodic_mode : {'fixed', 'knee'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian'}
         Which approach to take for fitting the aperiodic component.
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.

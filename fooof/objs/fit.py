@@ -329,10 +329,6 @@ class FOOOF():
 
         return: trained parameters
         """
-
-        print('guess', guess)
-        print('ap bounds', self._ap_bounds)
-        
         def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
             offset, knee, exp = ap_params
             model = func(X, offset, knee, exp)
@@ -357,8 +353,6 @@ class FOOOF():
         def cost(params, reg_weight = 1):  # simply use globally defined x and y
             model = gaussian_function(X, *params)
             return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
-        print('params', params)
-        print('bounds', bounds)
         
         res = minimize(cost, x0 = params, args = reg_weight, bounds = bounds, 
                                                 options = {'maxiter': self._maxfev})
@@ -468,7 +462,6 @@ class FOOOF():
         -----
         Data is optional, if data has already been added to the object.
         """
-
         self.fit(freqs, power_spectrum, freq_range)
         self.plot(plt_log=plt_log, **plot_kwargs)
         self.print_results(concise=False)
@@ -528,7 +521,7 @@ class FOOOF():
 
             # Fit the aperiodic component
             self.aperiodic_params_ = self._robust_ap_fit(self.freqs, self.power_spectrum)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, self.aperiodic_mode)
 
             # Flatten the power spectrum using fit aperiodic fit
             self._spectrum_flat = self.power_spectrum - self._ap_fit
@@ -546,7 +539,7 @@ class FOOOF():
             # Run final aperiodic fit on peak-removed power spectrum
             #   This overwrites previous aperiodic fit, and recomputes the flattened spectrum
             self.aperiodic_params_ = self._simple_ap_fit(self.freqs, self._spectrum_peak_rm)
-            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_)
+            self._ap_fit = gen_aperiodic(self.freqs, self.aperiodic_params_, self.aperiodic_mode)
             self._spectrum_flat = self.power_spectrum - self._ap_fit
 
             # Create full power_spectrum model fit
@@ -898,7 +891,7 @@ class FOOOF():
 
         # Do a quick, initial aperiodic fit
         popt = self._simple_ap_fit(freqs, power_spectrum)
-        initial_fit = gen_aperiodic(freqs, popt)
+        initial_fit = gen_aperiodic(freqs, popt, self.aperiodic_mode)
 
         # Flatten power_spectrum based on initial aperiodic fit
         flatspec = power_spectrum - initial_fit
@@ -964,7 +957,6 @@ class FOOOF():
         # Find peak: Loop through, finding a candidate peak, and fitting with a guess gaussian
         #   Stopping procedures: limit on # of peaks, or relative or absolute height thresholds
         while len(guess) < self.max_n_peaks:
-            print('loop to find peaks')
 
             # Find candidate peak - the maximum point of the flattened spectrum
             max_ind = np.argmax(flat_iter)
@@ -1054,7 +1046,6 @@ class FOOOF():
         #     ((cf_low_peak1, height_low_peak1, bw_low_peak1, *repeated for n_peaks*),
         #      (cf_high_peak1, height_high_peak1, bw_high_peak, *repeated for n_peaks*))
         #     ^where each value sets the bound on the specified parameter
-        print('_fit_peak_guess', guess)
         lo_bound = [[peak[0] - 2 * self._cf_bound * peak[2], 0, self._gauss_std_limits[0]]
                     for peak in guess]
         hi_bound = [[peak[0] + 2 * self._cf_bound * peak[2], np.inf, self._gauss_std_limits[1]]
@@ -1066,8 +1057,6 @@ class FOOOF():
             [self.freq_range[0], *bound[1:]] for bound in lo_bound]
         hi_bound = [bound if bound[0] < self.freq_range[1] else \
             [self.freq_range[1], *bound[1:]] for bound in hi_bound]
-        print('lo bounds', lo_bound)
-        print('hi bounds', hi_bound)
 
         # Unpacks the embedded lists into flat tuples
         #   This is what the fit function requires as input
@@ -1086,7 +1075,6 @@ class FOOOF():
                 if hi_bound_oi in [np.inf, -np.inf]:
                     hi_bound_oi = None
                 gaus_param_bounds.append((lo_bound_oi, hi_bound_oi))
-            print('gaus_param_bounds', gaus_param_bounds)
 
         # Flatten guess, for use with curve fit
         guess = np.ndarray.flatten(guess)
@@ -1109,8 +1097,6 @@ class FOOOF():
                          "This can happen with settings that are too liberal, leading, "
                          "to a large number of guess peaks that cannot be fit together.")
             raise FitError(error_msg) from excp
-        except Exception as e:
-            print(e)
 
         # Re-organize params into 2d matrix
         gaussian_params = np.array(group_three(gaussian_params))
