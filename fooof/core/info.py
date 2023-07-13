@@ -77,6 +77,8 @@ def get_ap_indices(aperiodic_mode):
         labels = ('offset', 'exponent')
     elif aperiodic_mode == 'knee':
         labels = ('offset', 'knee', 'exponent')
+    elif aperiodic_mode == 'lorentzian':
+        labels = ('offset', 'log knee', 'exponent')
     else:
         raise ValueError("Aperiodic mode not understood.")
 
@@ -90,7 +92,7 @@ def get_indices(aperiodic_mode):
 
     Parameters
     ----------
-    aperiodic_mode : {'fixed', 'knee'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian'}
         Which mode was used for the aperiodic component.
 
     Returns
