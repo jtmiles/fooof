@@ -297,8 +297,10 @@ def gen_results_fm_str(fm, concise=False):
         '',
 
         # Aperiodic parameters
-        ('Aperiodic Parameters (offset, ' + ('knee, ' if fm.aperiodic_mode == 'knee' else '') + \
-         'exponent): '),
+        
+        ('Aperiodic Parameters (offset, knee, exponent): ' if fm.aperiodic_mode == 'knee' else \
+         'Aperiodic Parameters (offset, log knee, exponent): ' if fm.aperiodic_mode == 'lorentzian' else \
+            'Aperiodic Parameters (offset, exponent): '),
         ', '.join(['{:2.4f}'] * len(fm.aperiodic_params_)).format(*fm.aperiodic_params_),
         '',
 
