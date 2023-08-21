@@ -28,8 +28,6 @@ _ap_bounds : tuple of tuple of float
     Upper and lower bounds on fitting aperiodic component.
 _cf_bound : float
     Parameter bounds for center frequency when fitting gaussians.
-_bw_std_edge : float
-    Bandwidth threshold for edge rejection of peaks, in units of gaussian standard deviation.
 _gauss_overlap_thresh : float
     Degree of overlap (in units of standard deviation) between gaussian guesses to drop one.
 _gauss_std_limits : list of [float, float]
@@ -84,6 +82,16 @@ from fooof.sim.gen import gen_freqs, gen_aperiodic, gen_periodic, gen_model
 ###################################################################################################
 ###################################################################################################
 
+def get_negative_AUC(params, fmin):
+    params_reshape = params.reshape(int(len(params)/3), 3)
+    AUC = 0
+    num_peaks = params_reshape.shape[0]
+    for i in range(num_peaks): 
+        mu, height, sigma = params_reshape[i, 0], params_reshape[i, 1], params_reshape[i, 2]
+        AUC += height * scipy.stats.norm(mu, sigma).cdf(fmin)
+
+    return AUC
+
 class FOOOF():
     """Model a physiological power spectrum as a combination of aperiodic and periodic components.
 
@@ -105,7 +113,7 @@ class FOOOF():
         Relative threshold for detecting peaks.
         This threshold is defined in relative units of the power spectrum (standard deviation).
     aperiodic_mode : {'fixed', 'knee', 'lorentzian'}
-        Which approach to take for fitting the aperiodic component.
+        Which approach to take for fitting the aperiodic component.,
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.
 
@@ -189,10 +197,9 @@ class FOOOF():
         #   Different format because these bounds will go to minimize rather than curvefit
         elif aperiodic_mode == 'lorentzian':
             self._ap_bounds =  ((None, None), (-1, 3), (None, None))
-
         # Threshold for how far a peak has to be from edge to keep.
         #   This is defined in units of gaussian standard deviation
-        self._bw_std_edge = 1.0
+        self.bw_std_edge = 1.0
         # Degree of overlap between gaussians for one to be dropped
         #   This is defined in units of gaussian standard deviation
         self._gauss_overlap_thresh = 0.75
@@ -313,8 +320,9 @@ class FOOOF():
         AUC = 0
         num_peaks = self.gaussian_params_.shape[0]
         for i in range(num_peaks): 
-            mu, sigma = self.gaussian_params_[i, 0], self.gaussian_params_[i, 2]
-            AUC += scipy.stats.norm(mu, sigma).cdf(self.fmin)
+            mu, height, sigma = self.gaussian_params_[i, 0], self.gaussian_params_[i, 1], self.gaussian_params_[i, 2]
+            AUC += height * scipy.stats.norm(mu, sigma).cdf(self.fmin)
+        
         return AUC
     
 
@@ -332,7 +340,7 @@ class FOOOF():
         def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
             offset, knee, exp = ap_params
             model = func(X, offset, knee, exp)
-            return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
+            return np.mean((model - y)**2) #+ reg_weight * self.negative_AUC() 
         
         res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
                                                 options = {'maxiter': self._maxfev})                      
@@ -352,7 +360,8 @@ class FOOOF():
 
         def cost(params, reg_weight = 1):  # simply use globally defined x and y
             model = gaussian_function(X, *params)
-            return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
+            return np.mean((model - y)**2) + reg_weight * get_negative_AUC(params, self.fmin) 
+            #return np.mean((model - y)**2) + reg_weight * self.negative_AUC() 
         
         res = minimize(cost, x0 = params, args = reg_weight, bounds = bounds, 
                                                 options = {'maxiter': self._maxfev})
@@ -1161,7 +1170,7 @@ class FOOOF():
         """
 
         cf_params = guess[:, 0]
-        bw_params = guess[:, 2] * self._bw_std_edge
+        bw_params = guess[:, 2] * self.bw_std_edge
 
         # Check if peaks within drop threshold from the edge of the frequency range
         keep_peak = \
