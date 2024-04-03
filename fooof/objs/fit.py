@@ -220,7 +220,7 @@ class FOOOF():
         self._debug = False
         # Set default data checking modes - controls which checks get run on input data
         #   check_freqs: check the frequency values, and raises an error for uneven spacing
-        self._check_freqs = True
+        self._check_freqs = False
         #   check_data: checks the power values and raises an error for any NaN / Inf values
         self._check_data = True
 
