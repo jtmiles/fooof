@@ -44,7 +44,13 @@ def plot_aperiodic_params(aps, colors=None, labels=None, ax=None, **plot_kwargs)
     else:
 
         # Unpack data: offset as x; exponent as y
-        xs, ys = aps[:, 0], aps[:, -1]
+        if np.shape(aps)[1] == 2:
+            xs, ys = aps[:, 0], aps[:, 1]
+        elif np.shape(aps)[1] == 3:
+            xs, ys = aps[:, 0], aps[:, 2]
+        elif np.shape(aps)[1] == 4:
+            xs, ys = aps[:, 0], aps[:, 2]
+            
         sizes = plot_kwargs.pop('s', 150)
 
         # Create the plot

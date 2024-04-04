@@ -66,7 +66,7 @@ from fooof.core.io import save_fm, load_json
 from fooof.core.reports import save_report_fm
 from fooof.core.modutils import copy_doc_func_to_method
 from fooof.core.utils import group_three, check_array_dim
-from fooof.core.funcs import gaussian_function, get_ap_func, lorentzian_function, infer_ap_func
+from fooof.core.funcs import gaussian_function, get_ap_func, lorentzian_function, lorentzian_noise_floor_function, infer_ap_func
 from fooof.core.errors import (FitError, NoModelError, DataError,
                                NoDataError, InconsistentDataError)
 from fooof.core.strings import (gen_settings_str, gen_results_fm_str,
@@ -112,7 +112,7 @@ class FOOOF():
     peak_threshold : float, optional, default: 2.0
         Relative threshold for detecting peaks.
         This threshold is defined in relative units of the power spectrum (standard deviation).
-    aperiodic_mode : {'fixed', 'knee', 'lorentzian'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian', 'lorentzian-noise-floor'}
         Which approach to take for fitting the aperiodic component.,
     verbose : bool, optional, default: True
         Verbosity mode. If True, prints out warnings and general status updates.
@@ -188,6 +188,8 @@ class FOOOF():
             self._ap_guess = (None, 0, None)
         elif aperiodic_mode == 'lorentzian':
             self._ap_guess = (None, 1, None)
+        elif aperiodic_mode == 'lorentzian-noise-floor':
+            self._ap_guess = (None, 1, None, None)
         # Bounds for aperiodic fitting, as: ((offset_low_bound, knee_low_bound, exp_low_bound),
         #                                    (offset_high_bound, knee_high_bound, exp_high_bound))
         # By default, aperiodic fitting is unbound, but can be restricted here, if desired
@@ -197,6 +199,8 @@ class FOOOF():
         #   Different format because these bounds will go to minimize rather than curvefit
         elif aperiodic_mode == 'lorentzian':
             self._ap_bounds =  ((None, None), (-1, 3), (None, None))
+        elif aperiodic_mode == 'lorentzian-noise-floor':
+            self._ap_bounds =  ((None, None), (-1, 3), (None, None), (None, None))
         # Threshold for how far a peak has to be from edge to keep.
         #   This is defined in units of gaussian standard deviation
         self.bw_std_edge = 1.0
@@ -302,8 +306,13 @@ class FOOOF():
 
         if clear_results:
 
-            self.aperiodic_params_ = np.array([np.nan] * \
-                (2 if self.aperiodic_mode == 'fixed' else 3))
+            if self.aperiodic_mode == 'fixed':
+                self.aperiodic_params_ = np.array([np.nan] * 2)
+            elif self.aperiodic_mode == 'lorentzian-noise-floor':
+                self.aperiodic_params_ = np.array([np.nan] * 4)
+            else:
+                self.aperiodic_params_ = np.array([np.nan] * 3)
+            
             self.gaussian_params_ = np.empty([0, 3])
             self.peak_params_ = np.empty([0, 3])
             self.r_squared_ = np.nan
@@ -337,11 +346,17 @@ class FOOOF():
 
         return: trained parameters
         """
-        def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
-            offset, knee, exp = ap_params
-            model = func(X, offset, knee, exp)
-            return np.mean((model - y)**2) #+ reg_weight * self.negative_AUC() 
-        
+        if self.aperiodic_mode == 'lorentzian-noise-floor':
+            def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
+                offset, knee, exp, noise_floor = ap_params
+                model = func(X, offset, knee, exp, noise_floor)
+                return np.mean((model - y)**2) 
+        else:
+            def cost(ap_params, reg_weight = 1):  # simply use globally defined x and y
+                offset, knee, exp = ap_params
+                model = func(X, offset, knee, exp)
+                return np.mean((model - y)**2) 
+
         res = minimize(cost, guess, reg_weight, bounds = self._ap_bounds, 
                                                 options = {'maxiter': self._maxfev})                      
 
@@ -840,19 +855,20 @@ class FOOOF():
         # Get the guess parameters and/or calculate from the data, as needed
         #   Note that these are collected as lists, to concatenate with or without knee later
         off_guess = [power_spectrum[0] if not self._ap_guess[0] else self._ap_guess[0]]
-        kne_guess = [self._ap_guess[1]] if self.aperiodic_mode in ['knee', 'lorentzian'] else []
+        kne_guess = [self._ap_guess[1]] if self.aperiodic_mode in ['knee', 'lorentzian', 'lorentzian-noise-floor'] else []
         exp_guess = [np.abs((self.power_spectrum[-1] - self.power_spectrum[0]) /
                             (np.log10(self.freqs[-1]) - np.log10(self.freqs[0])))
                      if not self._ap_guess[2] else self._ap_guess[2]]
+        nfl_guess = [np.min(power_spectrum)] if self.aperiodic_mode in ['lorentzian-noise-floor'] else []
 
         # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
         if self.aperiodic_mode == 'fixed':
             ap_bounds = tuple(bound[0::2] for bound in self._ap_bounds)
-        elif self.aperiodic_mode in ['knee', 'lorentzian']:
+        elif self.aperiodic_mode in ['knee', 'lorentzian', 'lorentzian-noise-floor']:
             ap_bounds = self._ap_bounds 
 
         # Collect together guess parameters
-        guess = np.array(off_guess + kne_guess + exp_guess)
+        guess = np.array(off_guess + kne_guess + exp_guess + nfl_guess)
 
         # Ignore warnings that are raised in curve_fit
         #   A runtime warning can occur while exploring parameters in curve fitting
@@ -865,8 +881,12 @@ class FOOOF():
                     aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
                                                     freqs, power_spectrum, p0=guess,
                                                     maxfev=self._maxfev, bounds=ap_bounds)
-                elif self.aperiodic_mode == 'lorentzian':
+                elif self.aperiodic_mode in ['lorentzian']:
                     aperiodic_params = self.aperiodic_regression(lorentzian_function,
+                                                    freqs, power_spectrum, np.array(guess),
+                                                    self.regularization_weight)
+                elif self.aperiodic_mode in ['lorentzian-noise-floor']:
+                    aperiodic_params = self.aperiodic_regression(lorentzian_noise_floor_function,
                                                     freqs, power_spectrum, np.array(guess),
                                                     self.regularization_weight)
         except RuntimeError as excp:
@@ -917,7 +937,7 @@ class FOOOF():
         # Get bounds for aperiodic fitting, dropping knee bound if not set to fit knee
         if self.aperiodic_mode == 'fixed':
             ap_bounds = tuple(bound[0::2] for bound in self._ap_bounds)
-        elif self.aperiodic_mode in ['knee', 'lorentzian']:
+        elif self.aperiodic_mode in ['knee', 'lorentzian', 'lorentzian-noise-floor']:
             ap_bounds = self._ap_bounds 
 
         # Second aperiodic fit - using results of first fit as guess parameters
@@ -929,10 +949,15 @@ class FOOOF():
                     aperiodic_params, _ = curve_fit(get_ap_func(self.aperiodic_mode),
                                                     freqs_ignore, spectrum_ignore, p0=popt,
                                                     maxfev=self._maxfev, bounds=ap_bounds)
-                elif self.aperiodic_mode == 'lorentzian':
+                elif self.aperiodic_mode in ['lorentzian']:
                     aperiodic_params = self.aperiodic_regression(lorentzian_function,
                                                     freqs_ignore, spectrum_ignore, popt,
                                                     self.regularization_weight)
+                elif self.aperiodic_mode in ['lorentzian-noise-floor']:
+                    aperiodic_params = self.aperiodic_regression(lorentzian_noise_floor_function,
+                                                    freqs_ignore, spectrum_ignore, popt,
+                                                    self.regularization_weight)    
+
         except RuntimeError as excp:
             error_msg = ("Model fitting failed due to not finding "
                          "parameters in the robust aperiodic fit.")
@@ -1072,7 +1097,7 @@ class FOOOF():
         if self.aperiodic_mode in ['fixed', 'knee']:
             gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
                                 tuple(item for sublist in hi_bound for item in sublist))
-        elif self.aperiodic_mode == 'lorentzian':
+        elif self.aperiodic_mode in ['lorentzian', 'lorentzian-noise-floor']:
             lo_bound_flatten = np.array(lo_bound).flatten()
             hi_bound_flatten = np.array(hi_bound).flatten()
             gaus_param_bounds = []
@@ -1093,7 +1118,7 @@ class FOOOF():
             if self.aperiodic_mode in ['fixed', 'knee']:
                 gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
                                             p0=guess, maxfev=self._maxfev, bounds=gaus_param_bounds)
-            elif self.aperiodic_mode == 'lorentzian':
+            elif self.aperiodic_mode in ['lorentzian', 'lorentzian-noise-floor']:
                 gaussian_params = self.gaussian_regression(self.freqs, self._spectrum_flat, 
                                                         list(guess), self.regularization_weight, 
                                                         tuple(gaus_param_bounds),)
