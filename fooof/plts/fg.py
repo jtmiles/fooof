@@ -87,6 +87,10 @@ def plot_fg_ap(fg, ax=None, **plot_kwargs):
         plot_scatter_2(fg.get_params('aperiodic_params', 'exponent'), 'Exponent',
                        fg.get_params('aperiodic_params', 'log knee'), 'Log Knee',
                        'Aperiodic Fit', ax=ax)
+    elif fg.aperiodic_mode == 'lorentzian-noise-floor':
+        plot_scatter_2(fg.get_params('aperiodic_params', 'exponent'), 'Exponent',
+                       fg.get_params('aperiodic_params', 'log knee'), 'Log Knee',
+                       'Aperiodic Fit', ax=ax)
     else:
         plot_scatter_1(fg.get_params('aperiodic_params', 'exponent'), 'Exponent',
                        'Aperiodic Fit', ax=ax)

@@ -25,7 +25,7 @@ def plot_aperiodic_params(aps, colors=None, labels=None, ax=None, **plot_kwargs)
     Parameters
     ----------
     aps : 2d array or list of 2d array
-        Aperiodic parameters. Each row is a parameter set, as [Off, Exp] or [Off, Knee, Exp].
+        Aperiodic parameters. Each row is a parameter set, as [Off, Exp], [Off, Knee, Exp], or [Off, Knee, Exp, NoiseFl].
     colors : str or list of str, optional
         Color(s) to plot data.
     labels : list of str, optional
@@ -75,7 +75,7 @@ def plot_aperiodic_fits(aps, freq_range, control_offset=False,
     Parameters
     ----------
     aps : 2d array
-        Aperiodic parameters. Each row is a parameter set, as [Off, Exp] or [Off, Knee, Exp].
+        Aperiodic parameters. Each row is a parameter set, as [Off, Exp], [Off, Knee, Exp], or [Off, Knee, Exp, NoiseFl].
     freq_range : list of [float, float]
         The frequency range to plot the peak fits across, as [f_min, f_max].
     control_offset : boolean, optional, default: False
