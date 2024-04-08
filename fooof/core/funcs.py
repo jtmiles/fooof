@@ -280,7 +280,7 @@ def get_ap_func(aperiodic_mode):
         ap_func = lorentzian_function
     elif aperiodic_mode == 'lorentzian-noise-floor':
         ap_func = lorentzian_noise_floor_function
-    elif aperiodic_mode == 'lfixed-noise-floor':
+    elif aperiodic_mode == 'fixed-noise-floor':
         ap_func = fixed_noise_floor_function
     else:
         raise ValueError("Requested aperiodic mode not understood.")
