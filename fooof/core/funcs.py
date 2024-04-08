@@ -77,7 +77,7 @@ def lorentzian_noise_floor_function(xs, offset, log_knee, exp, noise_floor):
         Input x-axis values.
     offset, log_knee, exp, noise_floor : floats
         Parameters (offset, knee, exp) that define Lorentzian function:
-        y = offset + np.log10(((10**(log_knee * exp) + fmin**exp) / (10**(log_knee * exp) + xs**exp)) + noise_floor)
+        y =  np.log10( 10**offset * ((10**(log_knee * exp) + fmin**exp) / (10**(log_knee * exp) + xs**exp)) + noise_floor)
 
     Returns
     -------
@@ -88,7 +88,7 @@ def lorentzian_noise_floor_function(xs, offset, log_knee, exp, noise_floor):
     ys = np.zeros_like(xs)
     fmin = 1 #np.min(xs)
 
-    ys = ys + offset + np.log10(((10**(log_knee * exp) + fmin**exp) / (10**(log_knee * exp) + xs**exp)) + 10**noise_floor)
+    ys = ys + np.log10( 10**offset * ((10**(log_knee * exp) + fmin**exp) / (10**(log_knee * exp) + xs**exp)) + 10**noise_floor)
 
     return ys
 
