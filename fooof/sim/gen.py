@@ -299,7 +299,7 @@ def gen_aperiodic(freqs, aperiodic_params, aperiodic_mode=None):
         Frequency vector to create aperiodic component for.
     aperiodic_params : list of float
         Parameters that define the aperiodic component.
-    aperiodic_mode : {'fixed', 'knee', 'lorentzian', 'lorentzian-noise-floor'}, optional
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian', 'lorentzian-noise-floor', 'fixed-noise-floor'}, optional
         Which kind of aperiodic component to generate.
         If not provided, is inferred from the parameters.
 

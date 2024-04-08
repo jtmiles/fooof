@@ -93,6 +93,32 @@ def lorentzian_noise_floor_function(xs, offset, log_knee, exp, noise_floor):
     return ys
 
 
+def fixed_noise_floor_function(xs, offset, exp, noise_floor):
+    """Fixed (power law) fitting function with noise floor, for fitting aperiodic component without a 'log knee'.
+
+    NOTE: this function requires linear frequency (not log).
+
+    Parameters
+    ----------
+    xs : 1d array
+        Input x-axis values.
+    offset, exp, noise_floor : floats
+        Parameters (offset, knee, exp) that define Lorentzian function:
+        y =  np.log10( 10**offset * ((fmin / xs) ** exp) + 10**noise_floor)
+
+    Returns
+    -------
+    ys : 1d array
+        Output values for lorentzian function.
+    """
+
+    ys = np.zeros_like(xs)
+    fmin = 1 #np.min(xs)
+
+    ys = ys + np.log10( 10**offset * ((fmin / xs) ** exp) + 10**noise_floor)
+
+    return ys
+
 def expo_function(xs, *params):
     """Exponential fitting function, for fitting aperiodic component with a 'knee'.
 
@@ -254,6 +280,8 @@ def get_ap_func(aperiodic_mode):
         ap_func = lorentzian_function
     elif aperiodic_mode == 'lorentzian-noise-floor':
         ap_func = lorentzian_noise_floor_function
+    elif aperiodic_mode == 'lfixed-noise-floor':
+        ap_func = fixed_noise_floor_function
     else:
         raise ValueError("Requested aperiodic mode not understood.")
 

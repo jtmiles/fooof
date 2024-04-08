@@ -64,7 +64,7 @@ def get_ap_indices(aperiodic_mode):
 
     Parameters
     ----------
-    aperiodic_mode : {'fixed', 'knee', 'lorentzian', 'lorentzian-noise-floor'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian', 'lorentzian-noise-floor', 'fixed-noise-floor'}
         Which mode was used for the aperiodic component.
 
     Returns
@@ -81,6 +81,8 @@ def get_ap_indices(aperiodic_mode):
         labels = ('offset', 'log knee', 'exponent')
     elif aperiodic_mode == 'lorentzian-noise-floor':
         labels = ('offset', 'log knee', 'exponent','noise-floor')
+    elif aperiodic_mode == 'fixed-noise-floor':
+        labels = ('offset', 'exponent','noise-floor')
     else:
         raise ValueError("Aperiodic mode not understood.")
 
@@ -94,7 +96,7 @@ def get_indices(aperiodic_mode):
 
     Parameters
     ----------
-    aperiodic_mode : {'fixed', 'knee', 'lorentzian','lorentzian-noise-floor'}
+    aperiodic_mode : {'fixed', 'knee', 'lorentzian','lorentzian-noise-floor', 'fixed-noise-floor'}
         Which mode was used for the aperiodic component.
 
     Returns

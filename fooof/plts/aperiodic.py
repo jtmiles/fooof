@@ -25,7 +25,7 @@ def plot_aperiodic_params(aps, colors=None, labels=None, ax=None, **plot_kwargs)
     Parameters
     ----------
     aps : 2d array or list of 2d array
-        Aperiodic parameters. Each row is a parameter set, as [Off, Exp], [Off, Knee, Exp], or [Off, Knee, Exp, NoiseFl].
+        Aperiodic parameters. Each row is a parameter set, as [Off, Exp], [Off, Knee, Exp], [Off, Knee, Exp, NoiseFl], or [Off, Exp, NoiseFl]
     colors : str or list of str, optional
         Color(s) to plot data.
     labels : list of str, optional
