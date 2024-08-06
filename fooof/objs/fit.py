@@ -1090,13 +1090,14 @@ class FOOOF():
 
         # Fit the peaks
         try:
-            if self.aperiodic_mode in ['fixed', 'knee']:
-                gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
+            # JTM UPDATE - Aug 6, 2024
+            # gaussian_regression is too long on big datasets; use curve_fit
+            gaussian_params, _ = curve_fit(gaussian_function, self.freqs, self._spectrum_flat,
                                             p0=guess, maxfev=self._maxfev, bounds=gaus_param_bounds)
-            elif self.aperiodic_mode == 'lorentzian':
-                gaussian_params = self.gaussian_regression(self.freqs, self._spectrum_flat, 
-                                                        list(guess), self.regularization_weight, 
-                                                        tuple(gaus_param_bounds),)
+            # elif self.aperiodic_mode == 'lorentzian':
+            #     gaussian_params = self.gaussian_regression(self.freqs, self._spectrum_flat, 
+            #                                             list(guess), self.regularization_weight, 
+            #                                             tuple(gaus_param_bounds),)
         except RuntimeError as excp:
             error_msg = ("Model fitting failed due to not finding "
                          "parameters in the peak component fit.")
