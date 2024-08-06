@@ -1069,21 +1069,25 @@ class FOOOF():
 
         # Unpacks the embedded lists into flat tuples
         #   This is what the fit function requires as input
-        if self.aperiodic_mode in ['fixed', 'knee']:
-            gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
-                                tuple(item for sublist in hi_bound for item in sublist))
-        elif self.aperiodic_mode == 'lorentzian':
-            lo_bound_flatten = np.array(lo_bound).flatten()
-            hi_bound_flatten = np.array(hi_bound).flatten()
-            gaus_param_bounds = []
-            for i in range(len(lo_bound_flatten)):
-                lo_bound_oi = lo_bound_flatten[i]
-                hi_bound_oi = hi_bound_flatten[i]
-                if lo_bound_oi in [np.inf, -np.inf]:
-                    lo_bound_oi = None
-                if hi_bound_oi in [np.inf, -np.inf]:
-                    hi_bound_oi = None
-                gaus_param_bounds.append((lo_bound_oi, hi_bound_oi))
+        
+        # JTM UPDATE - Aug 6, 2024 (see below for more info)
+        # if self.aperiodic_mode in ['fixed', 'knee']:
+        gaus_param_bounds = (tuple(item for sublist in lo_bound for item in sublist),
+                            tuple(item for sublist in hi_bound for item in sublist))
+        # JTM UPDATE - Aug 6, 2024
+        # because not doing gaussian_regression, ensure proper bounding format
+        # elif self.aperiodic_mode == 'lorentzian':
+        #     lo_bound_flatten = np.array(lo_bound).flatten()
+        #     hi_bound_flatten = np.array(hi_bound).flatten()
+        #     gaus_param_bounds = []
+        #     for i in range(len(lo_bound_flatten)):
+        #         lo_bound_oi = lo_bound_flatten[i]
+        #         hi_bound_oi = hi_bound_flatten[i]
+        #         if lo_bound_oi in [np.inf, -np.inf]:
+        #             lo_bound_oi = None
+        #         if hi_bound_oi in [np.inf, -np.inf]:
+        #             hi_bound_oi = None
+        #         gaus_param_bounds.append((lo_bound_oi, hi_bound_oi))
 
         # Flatten guess, for use with curve fit
         guess = np.ndarray.flatten(guess)
