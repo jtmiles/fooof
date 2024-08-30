@@ -534,10 +534,7 @@ class FOOOF():
 
             # Flatten the power spectrum using fit aperiodic fit
             self._spectrum_flat = self.power_spectrum - self._ap_fit
-            #### JTM edit - Aug 26, 2024 (see lines ~910 - 920 for motivation)
-            self._spectrum_flat[self._spectrum_flat < 0] = 0
-            
-            
+
             # Find peaks, and fit them with gaussians
             self.gaussian_params_ = self._fit_peaks(np.copy(self._spectrum_flat))
 
@@ -909,14 +906,7 @@ class FOOOF():
         flatspec = power_spectrum - initial_fit
 
         # Flatten outliers, defined as any points that drop below 0
-        ##### JTM EDIT - Aug 26, 2024
-        # flatspec[flatspec < 0] = 0
-        #### Change inspired by Wilkinson et al., 2024:
-        #### https://doi.org/10.1038/s41467-024-50204-4
-        #### End up with many spectra that dip below aperiodic fits
-        #### causes systematic, age-related, frequency-specific RMSE estimates
-        if min(flatspec) < 0:
-            flatspec -= min(flatspec)
+        flatspec[flatspec < 0] = 0
 
         # Use percentile threshold, in terms of # of points, to extract and re-fit
         perc_thresh = np.percentile(flatspec, self._ap_percentile_thresh)
